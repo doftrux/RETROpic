@@ -1,0 +1,2109 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>레트로 사진 보정</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&display=swap');
+        
+        body {
+            font-family: 'Noto Sans KR', sans-serif;
+            background-color: #121212;
+            color: #e0e0e0;
+        }
+
+        .canvas-container {
+            background-image: 
+                linear-gradient(45deg, #1f1f1f 25%, transparent 25%), 
+                linear-gradient(-45deg, #1f1f1f 25%, transparent 25%), 
+                linear-gradient(45deg, transparent 75%, #1f1f1f 75%), 
+                linear-gradient(-45deg, transparent 75%, #1f1f1f 75%);
+            background-size: 20px 20px;
+            background-position: 0 0, 0 10px, 10px -10px, -10px 0px;
+        }
+
+        input[type=range] {
+            -webkit-appearance: none;
+            width: 100%;
+            background: transparent;
+        }
+
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            height: 16px;
+            width: 16px;
+            border-radius: 50%;
+            background: #a855f7;
+            cursor: pointer;
+            margin-top: -6px;
+            box-shadow: 0 0 10px rgba(168, 85, 247, 0.5);
+            transition: transform 0.1s;
+        }
+
+        input[type=range]::-webkit-slider-thumb:active {
+            transform: scale(1.2);
+        }
+
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%;
+            height: 4px;
+            cursor: pointer;
+            background: #374151;
+            border-radius: 2px;
+        }
+
+        input[type=range]:focus {
+            outline: none;
+        }
+
+        .spin-hidden::-webkit-outer-spin-button,
+        .spin-hidden::-webkit-inner-spin-button {
+            -webkit-appearance: none;
+            margin: 0;
+        }
+        .spin-hidden {
+            -moz-appearance: textfield;
+        }
+        
+        .loader {
+            border: 3px solid #374151;
+            border-bottom-color: #a855f7;
+            border-radius: 50%;
+            display: inline-block;
+            box-sizing: border-box;
+            animation: rotation 1s linear infinite;
+        }
+
+        @keyframes rotation {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 6px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: rgba(0,0,0,0.2); 
+            border-radius: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: rgba(168, 85, 247, 0.4); 
+            border-radius: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+            background: rgba(168, 85, 247, 0.6); 
+        }
+
+        /* 도움말 툴팁 스타일 (글로벌 렌더링용) */
+        #global-tooltip {
+            position: fixed;
+            background-color: #1f2937;
+            color: #e5e7eb;
+            font-size: 12px;
+            padding: 8px 12px;
+            border-radius: 6px;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
+            border: 1px solid #374151;
+            opacity: 0;
+            visibility: hidden;
+            pointer-events: none;
+            transition: opacity 0.2s, visibility 0.2s;
+            z-index: 9999;
+            max-width: 220px;
+            word-break: keep-all;
+            line-height: 1.5;
+            font-weight: 400;
+        }
+
+        /* 브러시 커서 스타일 */
+        #brush-cursor {
+            position: fixed;
+            border-radius: 50%;
+            border: 1.5px solid white;
+            box-shadow: 0 0 3px rgba(0,0,0,0.8), inset 0 0 3px rgba(0,0,0,0.8);
+            pointer-events: none;
+            z-index: 50;
+            display: none;
+            transform: translate(-50%, -50%);
+        }
+    </style>
+</head>
+<body class="h-[100dvh] w-full flex flex-col p-0 sm:p-4 box-border">
+
+    <div id="brush-cursor"></div>
+    <div id="global-tooltip"></div>
+
+    <div class="w-full h-full max-w-[1600px] mx-auto bg-gray-900 sm:rounded-2xl shadow-2xl overflow-hidden sm:border border-gray-800 flex flex-col md:flex-row">
+        
+        <!-- 좌측/상단: 이미지 프리뷰 영역 -->
+        <div class="flex-1 p-4 sm:p-6 flex flex-col min-h-0">
+            <h1 class="text-2xl font-bold mb-3 sm:mb-4 text-white flex items-center gap-2 shrink-0">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-purple-500"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg>
+                레트로 픽
+            </h1>
+            
+            <div id="dropzone" class="canvas-container relative flex-1 rounded-xl border-2 border-dashed border-gray-700 flex items-center justify-center overflow-hidden group hover:border-purple-500 transition-colors cursor-pointer">
+                
+                <div id="upload-placeholder" class="text-center p-6 pointer-events-none">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="mx-auto mb-3 text-gray-500 group-hover:text-purple-400 transition-colors"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                    <p class="text-gray-400 font-medium">클릭하거나 이미지를 드래그하세요</p>
+                    <p class="text-gray-600 text-sm mt-1">PNG, JPG 지원</p>
+                </div>
+
+                <canvas id="canvas" class="hidden max-w-full max-h-full object-contain absolute inset-0 m-auto touch-none"></canvas>
+                
+                <div id="loading" class="hidden absolute inset-0 bg-black/60 flex items-center justify-center backdrop-blur-sm z-10 pointer-events-none">
+                    <div class="flex flex-col items-center gap-3">
+                        <span class="loader w-10 h-10"></span>
+                        <span class="text-sm font-medium text-purple-400 text-center">필터 적용 중...</span>
+                    </div>
+                </div>
+
+                <input type="file" id="file-input" class="hidden" accept="image/*">
+            </div>
+        </div>
+
+        <!-- 우측/하단: 컨트롤 패널 영역 -->
+        <div class="w-full md:w-[360px] lg:w-[420px] bg-gray-950 p-4 sm:p-6 border-t md:border-t-0 md:border-l border-gray-800 flex flex-col gap-4 h-[45dvh] md:h-full shrink-0">
+            
+            <div class="space-y-4 flex-1 overflow-y-auto pr-2 custom-scrollbar">
+                <h2 class="text-lg font-semibold text-gray-300 border-b border-gray-800 pb-2 sticky top-0 bg-gray-950 z-10 pt-1">필터 설정</h2>
+
+                <!-- 0. 보호 마스크 (Brush Mask) -->
+                <div class="space-y-3 pb-3 border-b border-gray-800 mb-2">
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center gap-1.5">
+                            <label for="mask-toggle" class="text-sm font-medium text-gray-300">🖌️ 보호 마스크</label>
+                            <svg data-tooltip="브러시로 문지른 영역은 필터와 효과가 적용되지 않고 원본 상태를 유지합니다." xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-gray-500 cursor-help hover:text-purple-400 transition-colors help-icon"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+                        </div>
+                        <label class="relative inline-flex items-center cursor-pointer">
+                            <input type="checkbox" id="mask-toggle" class="sr-only peer">
+                            <div class="w-11 h-6 bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-purple-600"></div>
+                        </label>
+                    </div>
+                    
+                    <div class="flex flex-col gap-3 opacity-50 pointer-events-none transition-opacity" id="mask-controls">
+                        <div class="flex gap-2">
+                            <button id="tool-brush" class="flex-1 py-1.5 bg-purple-600 text-white text-xs rounded border border-purple-500 font-medium">그리기</button>
+                            <button id="tool-eraser" class="flex-1 py-1.5 bg-gray-800 text-gray-400 text-xs rounded border border-gray-700 font-medium hover:bg-gray-700">지우개</button>
+                        </div>
+                        <div class="flex gap-3 items-center">
+                            <div class="flex-1 flex flex-col gap-1">
+                                <div class="flex justify-between items-center">
+                                    <label class="text-xs text-gray-500">브러시 크기</label>
+                                    <span id="brush-size-val" class="text-xs text-purple-400 font-mono">50</span>
+                                </div>
+                                <input type="range" id="brush-size" min="10" max="200" value="50">
+                            </div>
+                        </div>
+                        <div class="flex justify-between items-center mt-1">
+                            <label class="flex items-center gap-2 cursor-pointer">
+                                <input type="checkbox" id="show-mask" checked class="accent-purple-500 w-4 h-4 rounded">
+                                <span class="text-xs text-gray-300">👁️ 마스크 영역 보기 (빨강)</span>
+                            </label>
+                            <button id="clear-mask-btn" class="text-xs text-rose-400 hover:text-rose-300 underline">모두 지우기</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 1. 화질 열화 -->
+                <div class="space-y-1">
+                    <div class="flex justify-between items-center mb-1">
+                        <div class="flex items-center gap-1.5">
+                            <label for="degrade" class="text-sm font-medium text-gray-300">화질 열화</label>
+                            <svg data-tooltip="이미지의 해상도와 색상을 낮춰 옛날 디지털 카메라나 폰카 같은 거친 화질을 만듭니다." xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-gray-500 cursor-help hover:text-purple-400 transition-colors help-icon"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+                            <label class="ml-1 flex items-center gap-1 cursor-pointer bg-gray-800 px-1.5 py-0.5 rounded border border-gray-700 hover:border-purple-500 transition-colors" title="이 필터에 보호 마스크를 적용합니다.">
+                                <input type="checkbox" id="mask-cb-degrade" class="accent-purple-500 w-2.5 h-2.5" checked>
+                                <span class="text-[10px] text-gray-400 leading-none">마스크</span>
+                            </label>
+                        </div>
+                        <div class="flex items-center gap-1">
+                            <input type="number" step="0.1" id="degrade-num" min="0" max="100" value="0" class="w-12 bg-gray-800 text-purple-400 font-mono text-xs text-right rounded px-1 py-0.5 border border-gray-700 focus:border-purple-500 outline-none spin-hidden">
+                            <span class="text-xs text-gray-500 w-3">%</span>
+                        </div>
+                    </div>
+                    <input type="range" id="degrade" min="0" max="100" value="0">
+                </div>
+
+                <!-- 2. 크로스 프로세싱 -->
+                <div class="space-y-1">
+                    <div class="flex justify-between items-center mb-1">
+                        <div class="flex items-center gap-1.5">
+                            <label for="crossprocess" class="text-sm font-medium text-gray-300">크로스 프로세싱</label>
+                            <svg data-tooltip="필름 현상 시 다른 약품을 교차 사용하여 독특하고 빈티지한 색감 왜곡을 만듭니다." xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-gray-500 cursor-help hover:text-purple-400 transition-colors help-icon"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+                            <label class="ml-1 flex items-center gap-1 cursor-pointer bg-gray-800 px-1.5 py-0.5 rounded border border-gray-700 hover:border-purple-500 transition-colors" title="이 필터에 보호 마스크를 적용합니다.">
+                                <input type="checkbox" id="mask-cb-crossprocess" class="accent-purple-500 w-2.5 h-2.5" checked>
+                                <span class="text-[10px] text-gray-400 leading-none">마스크</span>
+                            </label>
+                        </div>
+                        <div class="flex items-center gap-1">
+                            <input type="number" step="0.1" id="crossprocess-num" min="0" max="100" value="0" class="w-12 bg-gray-800 text-purple-400 font-mono text-xs text-right rounded px-1 py-0.5 border border-gray-700 focus:border-purple-500 outline-none spin-hidden">
+                            <span class="text-xs text-gray-500 w-3">%</span>
+                        </div>
+                    </div>
+                    <input type="range" id="crossprocess" min="0" max="100" value="0">
+                </div>
+
+                <!-- 3. 어두운 영역 틴트 -->
+                <div class="space-y-1">
+                    <div class="flex justify-between items-center mb-1">
+                        <div class="flex items-center gap-1.5">
+                            <label for="shadow-tint" class="text-sm font-medium text-gray-300">어두운 영역 틴트</label>
+                            <svg data-tooltip="사진의 어두운 영역(그림자)에 녹색 또는 자홍색 빛을 추가하여 레트로한 분위기를 연출합니다." xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-gray-500 cursor-help hover:text-purple-400 transition-colors help-icon"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+                            <label class="ml-1 flex items-center gap-1 cursor-pointer bg-gray-800 px-1.5 py-0.5 rounded border border-gray-700 hover:border-purple-500 transition-colors" title="이 필터에 보호 마스크를 적용합니다.">
+                                <input type="checkbox" id="mask-cb-shadow-tint" class="accent-purple-500 w-2.5 h-2.5" checked>
+                                <span class="text-[10px] text-gray-400 leading-none">마스크</span>
+                            </label>
+                        </div>
+                        <div class="flex items-center gap-1">
+                            <input type="number" step="0.1" id="shadow-tint-num" min="-100" max="100" value="0" class="w-12 bg-gray-800 text-purple-400 font-mono text-xs text-right rounded px-1 py-0.5 border border-gray-700 focus:border-purple-500 outline-none spin-hidden">
+                        </div>
+                    </div>
+                    <input type="range" id="shadow-tint" min="-100" max="100" value="0">
+                </div>
+
+                <!-- 4. 할레이션 -->
+                <div class="space-y-1">
+                    <div class="flex justify-between items-center mb-1">
+                        <div class="flex items-center gap-1.5">
+                            <label for="halation" class="text-sm font-medium text-gray-300">할레이션</label>
+                            <svg data-tooltip="강한 빛 주변으로 붉은빛이 번지는 아날로그 필름 특유의 빛 번짐 현상을 구현합니다." xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-gray-500 cursor-help hover:text-purple-400 transition-colors help-icon"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+                            <label class="ml-1 flex items-center gap-1 cursor-pointer bg-gray-800 px-1.5 py-0.5 rounded border border-gray-700 hover:border-purple-500 transition-colors" title="이 필터에 보호 마스크를 적용합니다.">
+                                <input type="checkbox" id="mask-cb-halation" class="accent-purple-500 w-2.5 h-2.5" checked>
+                                <span class="text-[10px] text-gray-400 leading-none">마스크</span>
+                            </label>
+                        </div>
+                        <div class="flex items-center gap-1">
+                            <input type="number" step="0.1" id="halation-num" min="0" max="100" value="0" class="w-12 bg-gray-800 text-purple-400 font-mono text-xs text-right rounded px-1 py-0.5 border border-gray-700 focus:border-purple-500 outline-none spin-hidden">
+                            <span class="text-xs text-gray-500 w-3">%</span>
+                        </div>
+                    </div>
+                    <input type="range" id="halation" min="0" max="100" value="0">
+                </div>
+
+                <!-- 5. 색수차 -->
+                <div class="space-y-1">
+                    <div class="flex justify-between items-center mb-1">
+                        <div class="flex items-center gap-1.5">
+                            <label for="aberration" class="text-sm font-medium text-gray-300">색수차 번짐</label>
+                            <svg data-tooltip="렌즈 가장자리에서 빛의 파장에 따라 색상이 어긋나는 광학적 왜곡(RGB 분리) 현상을 만듭니다." xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-gray-500 cursor-help hover:text-purple-400 transition-colors help-icon"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+                            <label class="ml-1 flex items-center gap-1 cursor-pointer bg-gray-800 px-1.5 py-0.5 rounded border border-gray-700 hover:border-purple-500 transition-colors" title="이 필터에 보호 마스크를 적용합니다.">
+                                <input type="checkbox" id="mask-cb-aberration" class="accent-purple-500 w-2.5 h-2.5" checked>
+                                <span class="text-[10px] text-gray-400 leading-none">마스크</span>
+                            </label>
+                        </div>
+                        <div class="flex items-center gap-1">
+                            <input type="number" step="0.1" id="aberration-num" min="0" max="50" value="0" class="w-12 bg-gray-800 text-purple-400 font-mono text-xs text-right rounded px-1 py-0.5 border border-gray-700 focus:border-purple-500 outline-none spin-hidden">
+                            <span class="text-xs text-gray-500 w-3">px</span>
+                        </div>
+                    </div>
+                    <input type="range" id="aberration" min="0" max="50" value="0">
+                </div>
+
+                <!-- 6. 노이즈 (수정됨) -->
+                <div class="space-y-1">
+                    <div class="flex justify-between items-center mb-1">
+                        <div class="flex items-center gap-1.5">
+                            <label for="noise" class="text-sm font-medium text-gray-300">노이즈</label>
+                            <svg data-tooltip="오래된 필름 사진에서 볼 수 있는 거칠고 자글자글한 입자(그레인)감을 추가합니다." xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-gray-500 cursor-help hover:text-purple-400 transition-colors help-icon"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+                            <label class="ml-1 flex items-center gap-1 cursor-pointer bg-gray-800 px-1.5 py-0.5 rounded border border-gray-700 hover:border-purple-500 transition-colors" title="이 필터에 보호 마스크를 적용합니다.">
+                                <input type="checkbox" id="mask-cb-noise" class="accent-purple-500 w-2.5 h-2.5" checked>
+                                <span class="text-[10px] text-gray-400 leading-none">마스크</span>
+                            </label>
+                        </div>
+                        <div class="flex items-center gap-1">
+                            <input type="number" step="0.1" id="noise-num" min="0" max="100" value="0" class="w-12 bg-gray-800 text-purple-400 font-mono text-xs text-right rounded px-1 py-0.5 border border-gray-700 focus:border-purple-500 outline-none spin-hidden">
+                            <span class="text-xs text-gray-500 w-3">%</span>
+                        </div>
+                    </div>
+                    <select id="noise-type" class="w-full bg-gray-900 text-xs text-gray-300 rounded px-2 py-1.5 border border-gray-700 focus:border-purple-500 outline-none mb-1">
+                        <option value="analog">🎞️ 아날로그 필름 (자연스러운 흑백)</option>
+                        <option value="coarse">🌑 거친 필름 입자 (큰 입자)</option>
+                        <option value="color">📺 디지털 컬러 노이즈</option>
+                        <option value="uniform">🌫️ 기본 균일 노이즈</option>
+                    </select>
+                    <input type="range" id="noise" min="0" max="100" value="0">
+                </div>
+
+                <!-- 7. 먼지와 스크래치 -->
+                <div class="space-y-1">
+                    <div class="flex justify-between items-center mb-1">
+                        <div class="flex items-center gap-1.5">
+                            <label for="dust" class="text-sm font-medium text-gray-300">먼지와 스크래치</label>
+                            <svg data-tooltip="보관이 덜 된 필름 표면에 묻은 먼지와 긁힌 자국을 덧입힙니다." xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-gray-500 cursor-help hover:text-purple-400 transition-colors help-icon"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+                            <label class="ml-1 flex items-center gap-1 cursor-pointer bg-gray-800 px-1.5 py-0.5 rounded border border-gray-700 hover:border-purple-500 transition-colors" title="이 필터에 보호 마스크를 적용합니다.">
+                                <input type="checkbox" id="mask-cb-dust" class="accent-purple-500 w-2.5 h-2.5" checked>
+                                <span class="text-[10px] text-gray-400 leading-none">마스크</span>
+                            </label>
+                        </div>
+                        <div class="flex items-center gap-1">
+                            <input type="number" step="0.1" id="dust-num" min="0" max="100" value="0" class="w-12 bg-gray-800 text-purple-400 font-mono text-xs text-right rounded px-1 py-0.5 border border-gray-700 focus:border-purple-500 outline-none spin-hidden">
+                            <span class="text-xs text-gray-500 w-3">%</span>
+                        </div>
+                    </div>
+                    <input type="range" id="dust" min="0" max="100" value="0">
+                </div>
+
+                <!-- 8. 빛 번짐 -->
+                <div class="space-y-1">
+                    <div class="flex justify-between items-center mb-1">
+                        <div class="flex items-center gap-1.5">
+                            <label for="lightleak" class="text-sm font-medium text-gray-300">필름 빛샘</label>
+                            <svg data-tooltip="카메라 틈새로 빛이 새어 들어와 필름이 타버린 듯한 붉고 노란 텍스처를 추가합니다." xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-gray-500 cursor-help hover:text-purple-400 transition-colors help-icon"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+                            <label class="ml-1 flex items-center gap-1 cursor-pointer bg-gray-800 px-1.5 py-0.5 rounded border border-gray-700 hover:border-purple-500 transition-colors" title="이 필터에 보호 마스크를 적용합니다.">
+                                <input type="checkbox" id="mask-cb-lightleak" class="accent-purple-500 w-2.5 h-2.5" checked>
+                                <span class="text-[10px] text-gray-400 leading-none">마스크</span>
+                            </label>
+                        </div>
+                        <div class="flex items-center gap-1">
+                            <input type="number" step="0.1" id="lightleak-num" min="0" max="100" value="0" class="w-12 bg-gray-800 text-purple-400 font-mono text-xs text-right rounded px-1 py-0.5 border border-gray-700 focus:border-purple-500 outline-none spin-hidden">
+                            <span class="text-xs text-gray-500 w-3">%</span>
+                        </div>
+                    </div>
+                    <input type="range" id="lightleak" min="0" max="100" value="0">
+                </div>
+
+                <!-- 9. 비네팅 -->
+                <div class="space-y-1">
+                    <div class="flex justify-between items-center mb-1">
+                        <div class="flex items-center gap-1.5">
+                            <label for="vignette" class="text-sm font-medium text-gray-300">비네팅</label>
+                            <svg data-tooltip="사진의 외곽(테두리) 부분을 점점 어둡게 하여 아날로그 렌즈의 주변부 광량 저하 현상을 만듭니다." xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-gray-500 cursor-help hover:text-purple-400 transition-colors help-icon"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+                            <label class="ml-1 flex items-center gap-1 cursor-pointer bg-gray-800 px-1.5 py-0.5 rounded border border-gray-700 hover:border-purple-500 transition-colors" title="이 필터에 보호 마스크를 적용합니다.">
+                                <input type="checkbox" id="mask-cb-vignette" class="accent-purple-500 w-2.5 h-2.5" checked>
+                                <span class="text-[10px] text-gray-400 leading-none">마스크</span>
+                            </label>
+                        </div>
+                        <div class="flex items-center gap-1">
+                            <input type="number" step="0.1" id="vignette-num" min="0" max="100" value="0" class="w-12 bg-gray-800 text-purple-400 font-mono text-xs text-right rounded px-1 py-0.5 border border-gray-700 focus:border-purple-500 outline-none spin-hidden">
+                            <span class="text-xs text-gray-500 w-3">%</span>
+                        </div>
+                    </div>
+                    <input type="range" id="vignette" min="0" max="100" value="0">
+                </div>
+
+                <!-- 10. 무지개 렌즈 플레어 -->
+                <div class="space-y-3 pt-3 border-t border-gray-800 mt-2">
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center gap-1.5">
+                            <label for="flare-toggle" class="text-sm font-medium text-gray-300">무지개 렌즈 반사</label>
+                            <svg data-tooltip="렌즈 내부의 빛 반사로 인해 생기는 광원과 무지개 모양의 링을 겹쳐 넣습니다." xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-gray-500 cursor-help hover:text-purple-400 transition-colors help-icon"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+                            <label class="ml-1 flex items-center gap-1 cursor-pointer bg-gray-800 px-1.5 py-0.5 rounded border border-gray-700 hover:border-purple-500 transition-colors" title="이 필터에 보호 마스크를 적용합니다.">
+                                <input type="checkbox" id="mask-cb-flare" class="accent-purple-500 w-2.5 h-2.5" checked>
+                                <span class="text-[10px] text-gray-400 leading-none">마스크</span>
+                            </label>
+                        </div>
+                        <label class="relative inline-flex items-center cursor-pointer">
+                            <input type="checkbox" id="flare-toggle" class="sr-only peer">
+                            <div class="w-11 h-6 bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-purple-600"></div>
+                        </label>
+                    </div>
+                    
+                    <div class="flex flex-col gap-3 opacity-50 pointer-events-none transition-opacity" id="flare-controls">
+                        <select id="flare-type" class="w-full bg-gray-900 text-sm text-gray-300 rounded-lg px-3 py-2 border border-gray-700 focus:border-purple-500 outline-none">
+                            <option value="cool">🌌 쿨톤 블루아워 무지개</option>
+                            <option value="warm">🌅 웜톤 노을 무지개</option>
+                            <option value="rainbow">🌈 클래식 무지개</option>
+                        </select>
+                        <div class="flex gap-3">
+                            <div class="flex-1 flex flex-col gap-1">
+                                <div class="flex justify-between items-center">
+                                    <label class="text-xs text-gray-500">투명도</label>
+                                    <div class="flex items-center gap-1">
+                                        <input type="number" step="0.1" id="flare-opacity-num" min="0" max="100" value="50" class="w-12 bg-gray-800 text-purple-400 font-mono text-xs text-right rounded px-1 py-0.5 border border-gray-700 focus:border-purple-500 outline-none spin-hidden">
+                                        <span class="text-xs text-gray-500 w-3">%</span>
+                                    </div>
+                                </div>
+                                <input type="range" id="flare-opacity" min="0" max="100" value="50">
+                            </div>
+                            <div class="flex-1 flex flex-col gap-1">
+                                <div class="flex justify-between items-center">
+                                    <label class="text-xs text-gray-500">크기</label>
+                                    <div class="flex items-center gap-1">
+                                        <input type="number" step="0.1" id="flare-size-num" min="10" max="9999" value="100" class="w-12 bg-gray-800 text-purple-400 font-mono text-xs text-right rounded px-1 py-0.5 border border-gray-700 focus:border-purple-500 outline-none spin-hidden">
+                                        <span class="text-xs text-gray-500 w-3">%</span>
+                                    </div>
+                                </div>
+                                <input type="range" id="flare-size" min="10" max="300" value="100">
+                            </div>
+                        </div>
+                        <div class="flex gap-3">
+                            <div class="flex-1 flex flex-col gap-1">
+                                <div class="flex justify-between items-center">
+                                    <label class="text-xs text-gray-500">링 두께</label>
+                                    <div class="flex items-center gap-1">
+                                        <input type="number" step="0.1" id="flare-thickness-num" min="10" max="500" value="100" class="w-12 bg-gray-800 text-purple-400 font-mono text-xs text-right rounded px-1 py-0.5 border border-gray-700 focus:border-purple-500 outline-none spin-hidden">
+                                        <span class="text-xs text-gray-500 w-3">%</span>
+                                    </div>
+                                </div>
+                                <input type="range" id="flare-thickness" min="10" max="500" value="100">
+                            </div>
+                            <div class="flex-1 flex flex-col gap-1">
+                                <div class="flex justify-between items-center">
+                                    <label class="text-xs text-gray-500">가우시안 흐림</label>
+                                    <div class="flex items-center gap-1">
+                                        <input type="number" step="0.1" id="flare-blur-num" min="0" max="100" value="0" class="w-12 bg-gray-800 text-purple-400 font-mono text-xs text-right rounded px-1 py-0.5 border border-gray-700 focus:border-purple-500 outline-none spin-hidden">
+                                        <span class="text-xs text-gray-500 w-3">px</span>
+                                    </div>
+                                </div>
+                                <input type="range" id="flare-blur" min="0" max="100" value="0">
+                            </div>
+                        </div>
+                        <div class="flex gap-3">
+                            <div class="flex-1 flex flex-col gap-1">
+                                <div class="flex justify-between items-center">
+                                    <label class="text-xs text-gray-500">광원 밝기</label>
+                                    <div class="flex items-center gap-1">
+                                        <input type="number" step="0.1" id="flare-core-bright-num" min="0" max="100" value="0" class="w-12 bg-gray-800 text-purple-400 font-mono text-xs text-right rounded px-1 py-0.5 border border-gray-700 focus:border-purple-500 outline-none spin-hidden">
+                                        <span class="text-xs text-gray-500 w-3">%</span>
+                                    </div>
+                                </div>
+                                <input type="range" id="flare-core-bright" min="0" max="100" value="0">
+                            </div>
+                            <div class="flex-1 flex flex-col gap-1">
+                                <div class="flex justify-between items-center">
+                                    <label class="text-xs text-gray-500">광원 크기</label>
+                                    <div class="flex items-center gap-1">
+                                        <input type="number" step="0.1" id="flare-core-size-num" min="0" max="100" value="15" class="w-12 bg-gray-800 text-purple-400 font-mono text-xs text-right rounded px-1 py-0.5 border border-gray-700 focus:border-purple-500 outline-none spin-hidden">
+                                        <span class="text-xs text-gray-500 w-3">%</span>
+                                    </div>
+                                </div>
+                                <input type="range" id="flare-core-size" min="0" max="100" value="15">
+                            </div>
+                        </div>
+                        <div class="flex gap-3">
+                            <div class="flex-1 flex flex-col gap-1">
+                                <div class="flex justify-between items-center">
+                                    <label class="text-xs text-gray-500">색수차</label>
+                                    <div class="flex items-center gap-1">
+                                        <input type="number" step="0.1" id="flare-aberration-num" min="0" max="50" value="10" class="w-12 bg-gray-800 text-purple-400 font-mono text-xs text-right rounded px-1 py-0.5 border border-gray-700 focus:border-purple-500 outline-none spin-hidden">
+                                        <span class="text-xs text-gray-500 w-3">px</span>
+                                    </div>
+                                </div>
+                                <input type="range" id="flare-aberration" min="0" max="50" value="10">
+                            </div>
+                            <div class="flex-1 flex flex-col gap-1">
+                                <div class="flex justify-between items-center">
+                                    <label class="text-xs text-gray-500">노이즈</label>
+                                    <div class="flex items-center gap-1">
+                                        <input type="number" step="0.1" id="flare-noise-num" min="0" max="100" value="45" class="w-12 bg-gray-800 text-purple-400 font-mono text-xs text-right rounded px-1 py-0.5 border border-gray-700 focus:border-purple-500 outline-none spin-hidden">
+                                        <span class="text-xs text-gray-500 w-3">%</span>
+                                    </div>
+                                </div>
+                                <input type="range" id="flare-noise" min="0" max="100" value="45">
+                            </div>
+                        </div>
+                        <div class="flex flex-col gap-1">
+                            <div class="flex justify-between"><label class="text-xs text-gray-500 mb-1">혼합 모드</label></div>
+                            <select id="flare-blend" class="w-full bg-gray-800 text-xs text-gray-300 rounded px-1 py-1.5 border border-gray-700 focus:border-purple-500 outline-none">
+                                <option value="screen">스크린 (Screen)</option>
+                                <option value="lighter">더하기 (Linear Dodge)</option>
+                                <option value="color-dodge">색상 다지 (Color Dodge)</option>
+                                <option value="overlay">오버레이 (Overlay)</option>
+                                <option value="soft-light">부드러운 빛 (Soft Light)</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 11. 십자형 빛 번짐 (크로스 필터) -->
+                <div class="space-y-3 pt-3 border-t border-gray-800 mt-2">
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center gap-1.5">
+                            <label for="crossfilter-toggle" class="text-sm font-medium text-gray-300">✨ 크로스 필터 (클릭하여 추가)</label>
+                            <svg data-tooltip="사진에서 원하는 위치를 클릭하여 십자형(4방향) 무지개 빛 갈라짐 효과를 하나씩 추가합니다." xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-gray-500 cursor-help hover:text-purple-400 transition-colors help-icon"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+                            <label class="ml-1 flex items-center gap-1 cursor-pointer bg-gray-800 px-1.5 py-0.5 rounded border border-gray-700 hover:border-purple-500 transition-colors" title="이 필터에 보호 마스크를 적용합니다.">
+                                <input type="checkbox" id="mask-cb-crossfilter" class="accent-purple-500 w-2.5 h-2.5" checked>
+                                <span class="text-[10px] text-gray-400 leading-none">마스크</span>
+                            </label>
+                        </div>
+                        <label class="relative inline-flex items-center cursor-pointer">
+                            <input type="checkbox" id="crossfilter-toggle" class="sr-only peer">
+                            <div class="w-11 h-6 bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-purple-600"></div>
+                        </label>
+                    </div>
+                    
+                    <div class="flex flex-col gap-3 opacity-50 pointer-events-none transition-opacity" id="crossfilter-controls">
+                        <div class="flex justify-between items-center bg-purple-900/20 p-2 rounded border border-purple-800/30">
+                            <span class="text-xs text-purple-300">💡 캔버스를 클릭하여 빛을 콕콕 추가하세요.</span>
+                            <div class="flex gap-2">
+                                <button id="undo-crossfilter-btn" class="text-xs text-gray-400 hover:text-white transition-colors">되돌리기</button>
+                                <button id="clear-crossfilter-btn" class="text-xs text-rose-400 hover:text-rose-300 transition-colors">초기화</button>
+                            </div>
+                        </div>
+
+                        <select id="crossfilter-type" class="w-full bg-gray-900 text-sm text-gray-300 rounded-lg px-3 py-2 border border-gray-700 focus:border-purple-500 outline-none">
+                            <option value="rainbow">🌈 클래식 무지개</option>
+                            <option value="cool">🌌 파란색 계열 (쿨톤)</option>
+                            <option value="warm">🌅 주황색 계열 (웜톤)</option>
+                        </select>
+
+                        <div class="flex gap-3">
+                            <div class="flex-1 flex flex-col gap-1">
+                                <div class="flex justify-between items-center">
+                                    <label class="text-xs text-gray-500">강도</label>
+                                    <div class="flex items-center gap-1">
+                                        <input type="number" step="0.1" id="crossfilter-intensity-num" min="0" max="100" value="80" class="w-12 bg-gray-800 text-purple-400 font-mono text-xs text-right rounded px-1 py-0.5 border border-gray-700 focus:border-purple-500 outline-none spin-hidden">
+                                        <span class="text-xs text-gray-500 w-3">%</span>
+                                    </div>
+                                </div>
+                                <input type="range" id="crossfilter-intensity" min="0" max="100" value="80">
+                            </div>
+                            <div class="flex-1 flex flex-col gap-1">
+                                <div class="flex justify-between items-center">
+                                    <label class="text-xs text-gray-500">크기 (길이)</label>
+                                    <div class="flex items-center gap-1">
+                                        <input type="number" step="0.1" id="crossfilter-length-num" min="1" max="200" value="100" class="w-12 bg-gray-800 text-purple-400 font-mono text-xs text-right rounded px-1 py-0.5 border border-gray-700 focus:border-purple-500 outline-none spin-hidden">
+                                        <span class="text-xs text-gray-500 w-3">%</span>
+                                    </div>
+                                </div>
+                                <input type="range" id="crossfilter-length" min="1" max="200" value="100">
+                            </div>
+                        </div>
+                        <div class="flex gap-3">
+                            <div class="flex-1 flex flex-col gap-1">
+                                <div class="flex justify-between items-center">
+                                    <label class="text-xs text-gray-500">빛줄기 두께</label>
+                                    <div class="flex items-center gap-1">
+                                        <input type="number" step="0.1" id="crossfilter-thickness-num" min="1" max="100" value="15" class="w-12 bg-gray-800 text-purple-400 font-mono text-xs text-right rounded px-1 py-0.5 border border-gray-700 focus:border-purple-500 outline-none spin-hidden">
+                                        <span class="text-xs text-gray-500 w-3">%</span>
+                                    </div>
+                                </div>
+                                <input type="range" id="crossfilter-thickness" min="1" max="100" value="15">
+                            </div>
+                            <div class="flex-1 flex flex-col gap-1">
+                                <div class="flex justify-between items-center">
+                                    <label class="text-xs text-gray-500">회전 각도</label>
+                                    <div class="flex items-center gap-1">
+                                        <input type="number" step="0.1" id="crossfilter-angle-num" min="0" max="90" value="0" class="w-12 bg-gray-800 text-purple-400 font-mono text-xs text-right rounded px-1 py-0.5 border border-gray-700 focus:border-purple-500 outline-none spin-hidden">
+                                        <span class="text-xs text-gray-500 w-3">°</span>
+                                    </div>
+                                </div>
+                                <input type="range" id="crossfilter-angle" min="0" max="90" value="0">
+                            </div>
+                        </div>
+                        <div class="flex gap-3">
+                            <div class="flex-1 flex flex-col gap-1">
+                                <div class="flex justify-between items-center">
+                                    <label class="text-xs text-gray-500">색상 정도</label>
+                                    <div class="flex items-center gap-1">
+                                        <input type="number" step="0.1" id="crossfilter-rainbow-num" min="0" max="300" value="150" class="w-12 bg-gray-800 text-purple-400 font-mono text-xs text-right rounded px-1 py-0.5 border border-gray-700 focus:border-purple-500 outline-none spin-hidden">
+                                        <span class="text-xs text-gray-500 w-3">%</span>
+                                    </div>
+                                </div>
+                                <input type="range" id="crossfilter-rainbow" min="0" max="300" value="150">
+                            </div>
+                            <div class="flex-1 flex flex-col gap-1">
+                                <div class="flex justify-between items-center">
+                                    <label class="text-xs text-gray-500">투명도</label>
+                                    <div class="flex items-center gap-1">
+                                        <input type="number" step="0.1" id="crossfilter-opacity-num" min="0" max="100" value="100" class="w-12 bg-gray-800 text-purple-400 font-mono text-xs text-right rounded px-1 py-0.5 border border-gray-700 focus:border-purple-500 outline-none spin-hidden">
+                                        <span class="text-xs text-gray-500 w-3">%</span>
+                                    </div>
+                                </div>
+                                <input type="range" id="crossfilter-opacity" min="0" max="100" value="100">
+                            </div>
+                        </div>
+                        <div class="flex gap-3">
+                            <div class="flex-1 flex flex-col gap-1">
+                                <div class="flex justify-between items-center">
+                                    <label class="text-xs text-gray-500">가우시안 흐림</label>
+                                    <div class="flex items-center gap-1">
+                                        <input type="number" step="0.1" id="crossfilter-blur-num" min="0" max="30" value="0" class="w-12 bg-gray-800 text-purple-400 font-mono text-xs text-right rounded px-1 py-0.5 border border-gray-700 focus:border-purple-500 outline-none spin-hidden">
+                                        <span class="text-xs text-gray-500 w-3">px</span>
+                                    </div>
+                                </div>
+                                <input type="range" id="crossfilter-blur" min="0" max="30" step="0.1" value="0">
+                            </div>
+                            <div class="flex-1 flex flex-col gap-1">
+                                <div class="flex justify-between items-center">
+                                    <label class="text-xs text-gray-500">색수차</label>
+                                    <div class="flex items-center gap-1">
+                                        <input type="number" step="0.1" id="crossfilter-aberration-num" min="0" max="20" value="0" class="w-12 bg-gray-800 text-purple-400 font-mono text-xs text-right rounded px-1 py-0.5 border border-gray-700 focus:border-purple-500 outline-none spin-hidden">
+                                        <span class="text-xs text-gray-500 w-3">px</span>
+                                    </div>
+                                </div>
+                                <input type="range" id="crossfilter-aberration" min="0" max="20" value="0">
+                            </div>
+                        </div>
+                        <div class="flex-1 flex flex-col gap-1">
+                            <div class="flex justify-between items-center">
+                                <label class="text-xs text-gray-500">노이즈 강도</label>
+                                <div class="flex items-center gap-1">
+                                    <input type="number" step="1" id="crossfilter-noise-num" min="0" max="100" value="0" class="w-12 bg-gray-800 text-purple-400 font-mono text-xs text-right rounded px-1 py-0.5 border border-gray-700 focus:border-purple-500 outline-none spin-hidden">
+                                    <span class="text-xs text-gray-500 w-3">%</span>
+                                </div>
+                            </div>
+                            <input type="range" id="crossfilter-noise" min="0" max="100" value="0">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 12. 날짜 각인 -->
+                <div class="space-y-3 pt-3 border-t border-gray-800 mt-2">
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center gap-1.5">
+                            <label for="datestamp" class="text-sm font-medium text-gray-300">필름 날짜 각인</label>
+                            <svg data-tooltip="필름 카메라 특유의 붉은색 LED 날짜 표시를 사진 모서리에 새깁니다." xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-gray-500 cursor-help hover:text-purple-400 transition-colors help-icon"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+                            <label class="ml-1 flex items-center gap-1 cursor-pointer bg-gray-800 px-1.5 py-0.5 rounded border border-gray-700 hover:border-purple-500 transition-colors" title="이 필터에 보호 마스크를 적용합니다.">
+                                <input type="checkbox" id="mask-cb-datestamp" class="accent-purple-500 w-2.5 h-2.5" checked>
+                                <span class="text-[10px] text-gray-400 leading-none">마스크</span>
+                            </label>
+                        </div>
+                        <label class="relative inline-flex items-center cursor-pointer">
+                            <input type="checkbox" id="datestamp" class="sr-only peer">
+                            <div class="w-11 h-6 bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-purple-600"></div>
+                        </label>
+                    </div>
+                    <div class="flex flex-col gap-2 opacity-50 pointer-events-none transition-opacity" id="date-controls">
+                        <div class="flex gap-2">
+                            <input type="date" id="date-input" class="flex-1 bg-gray-900 text-sm text-gray-300 rounded-lg px-3 py-2 border border-gray-700 focus:border-purple-500 outline-none" disabled>
+                            <select id="date-pos" class="flex-1 bg-gray-900 text-sm text-gray-300 rounded-lg px-3 py-2 border border-gray-700 focus:border-purple-500 outline-none" disabled>
+                                <option value="br">우측 하단</option>
+                                <option value="bl">좌측 하단</option>
+                                <option value="tr">우측 상단</option>
+                                <option value="tl">좌측 상단</option>
+                            </select>
+                        </div>
+                        <div class="flex-1 flex flex-col gap-1 mt-1">
+                            <div class="flex justify-between items-center">
+                                <label class="text-xs text-gray-500">글자 크기 (비율)</label>
+                                <div class="flex items-center gap-1">
+                                    <input type="number" step="0.1" id="date-size-num" min="10" max="300" value="100" class="w-12 bg-gray-800 text-purple-400 font-mono text-xs text-right rounded px-1 py-0.5 border border-gray-700 focus:border-purple-500 outline-none spin-hidden" disabled>
+                                    <span class="text-xs text-gray-500 w-3">%</span>
+                                </div>
+                            </div>
+                            <input type="range" id="date-size" min="10" max="300" value="100" disabled>
+                        </div>
+                        <div class="flex gap-3 mt-1">
+                            <div class="flex-1 flex flex-col gap-1">
+                                <div class="flex justify-between items-center">
+                                    <label class="text-xs text-gray-500">빛 번짐 (글로우)</label>
+                                    <div class="flex items-center gap-1">
+                                        <input type="number" step="0.1" id="date-glow-num" min="0" max="200" value="50" class="w-12 bg-gray-800 text-purple-400 font-mono text-xs text-right rounded px-1 py-0.5 border border-gray-700 focus:border-purple-500 outline-none spin-hidden" disabled>
+                                        <span class="text-xs text-gray-500 w-3">%</span>
+                                    </div>
+                                </div>
+                                <input type="range" id="date-glow" min="0" max="200" value="50" disabled>
+                            </div>
+                            <div class="flex-1 flex flex-col gap-1">
+                                <div class="flex justify-between items-center">
+                                    <label class="text-xs text-gray-500">각인 노이즈</label>
+                                    <div class="flex items-center gap-1">
+                                        <input type="number" step="0.1" id="date-noise-num" min="0" max="100" value="30" class="w-12 bg-gray-800 text-purple-400 font-mono text-xs text-right rounded px-1 py-0.5 border border-gray-700 focus:border-purple-500 outline-none spin-hidden" disabled>
+                                        <span class="text-xs text-gray-500 w-3">%</span>
+                                    </div>
+                                </div>
+                                <input type="range" id="date-noise" min="0" max="100" value="30" disabled>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 다운로드 영역 -->
+            <div class="flex gap-2 mt-2 pt-2 border-t border-gray-800 shrink-0">
+                <select id="download-res" class="bg-gray-800 text-sm text-gray-300 rounded-xl px-3 py-3 border border-gray-700 focus:border-purple-500 outline-none font-medium cursor-pointer">
+                    <option value="1280">HD</option>
+                    <option value="2560" selected>QHD</option>
+                    <option value="3840">4K</option>
+                    <option value="0">원본</option>
+                </select>
+                <button id="download-btn" disabled class="flex-1 bg-purple-600 hover:bg-purple-500 text-white font-medium py-3 px-4 rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 shadow-lg shadow-purple-900/20">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                    사진 저장
+                </button>
+            </div>
+
+        </div>
+    </div>
+
+    <script>
+        const fileInput = document.getElementById('file-input');
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        const placeholder = document.getElementById('upload-placeholder');
+        const downloadBtn = document.getElementById('download-btn');
+        const loading = document.getElementById('loading');
+        
+        const degradeSlider = document.getElementById('degrade');
+        const crossProcessSlider = document.getElementById('crossprocess');
+        const shadowTintSlider = document.getElementById('shadow-tint');
+        const halationSlider = document.getElementById('halation');
+        const aberrationSlider = document.getElementById('aberration');
+        const noiseSlider = document.getElementById('noise');
+        const noiseTypeSelect = document.getElementById('noise-type'); // 노이즈 타입 선택
+        const dustSlider = document.getElementById('dust');
+        const lightLeakSlider = document.getElementById('lightleak');
+        const vignetteSlider = document.getElementById('vignette');
+        
+        const maskToggle = document.getElementById('mask-toggle');
+        const maskControls = document.getElementById('mask-controls');
+        const toolBrushBtn = document.getElementById('tool-brush');
+        const toolEraserBtn = document.getElementById('tool-eraser');
+        const brushSizeSlider = document.getElementById('brush-size');
+        const showMaskToggle = document.getElementById('show-mask');
+        const clearMaskBtn = document.getElementById('clear-mask-btn');
+        const brushCursor = document.getElementById('brush-cursor');
+        
+        const flareToggle = document.getElementById('flare-toggle');
+        const flareTypeSelect = document.getElementById('flare-type');
+        const flareBlendSelect = document.getElementById('flare-blend');
+        const flareControls = document.getElementById('flare-controls');
+
+        // 크로스 필터 변수
+        const crossFilterToggle = document.getElementById('crossfilter-toggle');
+        const crossFilterControls = document.getElementById('crossfilter-controls');
+        const crossFilterTypeSelect = document.getElementById('crossfilter-type');
+        const undoCrossFilterBtn = document.getElementById('undo-crossfilter-btn');
+        const clearCrossFilterBtn = document.getElementById('clear-crossfilter-btn');
+        const crossFilterIntensitySlider = document.getElementById('crossfilter-intensity');
+        const crossFilterIntensityNum = document.getElementById('crossfilter-intensity-num');
+        const crossFilterLengthSlider = document.getElementById('crossfilter-length');
+        const crossFilterLengthNum = document.getElementById('crossfilter-length-num');
+        const crossFilterThicknessSlider = document.getElementById('crossfilter-thickness');
+        const crossFilterThicknessNum = document.getElementById('crossfilter-thickness-num');
+        const crossFilterAngleSlider = document.getElementById('crossfilter-angle');
+        const crossFilterAngleNum = document.getElementById('crossfilter-angle-num');
+        const crossFilterRainbowSlider = document.getElementById('crossfilter-rainbow');
+        const crossFilterRainbowNum = document.getElementById('crossfilter-rainbow-num');
+        const crossFilterOpacitySlider = document.getElementById('crossfilter-opacity');
+        const crossFilterOpacityNum = document.getElementById('crossfilter-opacity-num');
+        const crossFilterBlurSlider = document.getElementById('crossfilter-blur');
+        const crossFilterBlurNum = document.getElementById('crossfilter-blur-num');
+        const crossFilterAberrationSlider = document.getElementById('crossfilter-aberration');
+        const crossFilterAberrationNum = document.getElementById('crossfilter-aberration-num');
+        const crossFilterNoiseSlider = document.getElementById('crossfilter-noise');
+        const crossFilterNoiseNum = document.getElementById('crossfilter-noise-num');
+        
+        let crossFlares = []; // 클릭하여 추가된 빛 번짐 좌표 배열
+        
+        const datestampToggle = document.getElementById('datestamp');
+        const dateInput = document.getElementById('date-input');
+        const datePosSelect = document.getElementById('date-pos');
+        const dateSizeSlider = document.getElementById('date-size');
+        const dateSizeNum = document.getElementById('date-size-num');
+        const dateGlowSlider = document.getElementById('date-glow');
+        const dateGlowNum = document.getElementById('date-glow-num');
+        const dateNoiseSlider = document.getElementById('date-noise');
+        const dateNoiseNum = document.getElementById('date-noise-num');
+        const dateControls = document.getElementById('date-controls');
+        
+        let originalImage = new Image();
+        let isImageLoaded = false;
+        let renderTimeout = null;
+        
+        let activeTool = null; // 'mask', 'flare', 'crossfilter'
+        let isDraggingFlare = false;
+        let isDrawingMask = false;
+        let dragStartX = 0;
+        let dragStartY = 0;
+        let currentFlareX = 50; 
+        let currentFlareY = 50;
+        let dragStartFlareX = 50;
+        let dragStartFlareY = 50;
+
+        let lastMaskX = 0;
+        let lastMaskY = 0;
+        let isEraserMode = false;
+
+        let effectCanvas = document.createElement('canvas');
+        let effectCtx = effectCanvas.getContext('2d', { willReadFrequently: true });
+        let maskCanvas = document.createElement('canvas');
+        let maskCtx = maskCanvas.getContext('2d');
+
+        let dustParticles = [];
+        let scratchLines = [];
+
+        dateInput.value = new Date().toISOString().split('T')[0];
+        fileInput.addEventListener('change', handleImageUpload);
+        
+        // 툴팁 로직
+        const globalTooltip = document.getElementById('global-tooltip');
+        const helpIcons = document.querySelectorAll('.help-icon');
+        
+        helpIcons.forEach(icon => {
+            icon.addEventListener('mouseenter', (e) => {
+                globalTooltip.textContent = icon.getAttribute('data-tooltip');
+                const rect = icon.getBoundingClientRect();
+                let top = rect.top - globalTooltip.offsetHeight - 8;
+                let left = rect.left + (rect.width / 2) - (globalTooltip.offsetWidth / 2);
+                if (top < 10) top = rect.bottom + 8;
+                if (left < 10) left = 10;
+                if (left + globalTooltip.offsetWidth > window.innerWidth - 10) left = window.innerWidth - globalTooltip.offsetWidth - 10;
+                globalTooltip.style.top = top + 'px';
+                globalTooltip.style.left = left + 'px';
+                globalTooltip.style.opacity = '1';
+                globalTooltip.style.visibility = 'visible';
+            });
+            icon.addEventListener('mouseleave', () => {
+                globalTooltip.style.opacity = '0';
+                globalTooltip.style.visibility = 'hidden';
+            });
+        });
+
+        function setActiveTool(tool) {
+            activeTool = tool;
+            if (!isImageLoaded) return;
+            if (activeTool === 'mask' && maskToggle.checked) {
+                canvas.style.cursor = showMaskToggle.checked ? 'none' : 'default';
+                if (!showMaskToggle.checked) brushCursor.style.display = 'none';
+            } else if (activeTool === 'flare' && flareToggle.checked) {
+                canvas.style.cursor = 'move';
+                brushCursor.style.display = 'none';
+            } else if (activeTool === 'crossfilter' && crossFilterToggle.checked) {
+                canvas.style.cursor = 'crosshair';
+                brushCursor.style.display = 'none';
+            } else {
+                canvas.style.cursor = 'default';
+                brushCursor.style.display = 'none';
+            }
+        }
+
+        function syncInputPair(sliderId, numId) {
+            const slider = document.getElementById(sliderId);
+            const num = document.getElementById(numId);
+            if(!slider || !num) return;
+            
+            const trigger = () => {
+                if (isImageLoaded) {
+                    clearTimeout(renderTimeout);
+                    renderTimeout = setTimeout(() => applyEffects(), 50);
+                }
+            };
+
+            slider.addEventListener('input', (e) => {
+                num.value = e.target.value;
+                if (sliderId === 'shadow-tint') updateShadowTintColor();
+                if (sliderId === 'brush-size') document.getElementById('brush-size-val').textContent = e.target.value;
+                else trigger();
+            });
+            
+            num.addEventListener('input', (e) => {
+                let val = parseFloat(e.target.value);
+                if (!isNaN(val)) {
+                    slider.value = val;
+                    if (sliderId !== 'brush-size') trigger();
+                }
+                if (sliderId === 'shadow-tint') updateShadowTintColor();
+            });
+
+            num.addEventListener('change', (e) => {
+                let val = parseFloat(e.target.value);
+                if (isNaN(val)) val = parseFloat(slider.value);
+                const min = parseFloat(slider.min);
+                const max = num.hasAttribute('max') ? parseFloat(num.max) : parseFloat(slider.max);
+                val = Math.max(min, Math.min(max, val));
+                val = Math.round(val * 10) / 10;
+                num.value = val;
+                slider.value = val;
+                if (sliderId === 'shadow-tint') updateShadowTintColor();
+                if (sliderId !== 'brush-size') trigger();
+            });
+        }
+
+        const updateShadowTintColor = () => {
+            const numEl = document.getElementById('shadow-tint-num');
+            let val = parseFloat(numEl.value) || 0;
+            if(val < 0) numEl.style.color = "#2dd4bf"; 
+            else if(val > 0) numEl.style.color = "#fb7185"; 
+            else numEl.style.color = "#c084fc"; 
+        };
+
+        syncInputPair('degrade', 'degrade-num');
+        syncInputPair('crossprocess', 'crossprocess-num');
+        syncInputPair('shadow-tint', 'shadow-tint-num');
+        syncInputPair('halation', 'halation-num');
+        syncInputPair('aberration', 'aberration-num');
+        syncInputPair('noise', 'noise-num');
+        syncInputPair('dust', 'dust-num');
+        syncInputPair('lightleak', 'lightleak-num');
+        syncInputPair('vignette', 'vignette-num');
+
+        syncInputPair('flare-opacity', 'flare-opacity-num');
+        syncInputPair('flare-size', 'flare-size-num');
+        syncInputPair('flare-thickness', 'flare-thickness-num');
+        syncInputPair('flare-core-bright', 'flare-core-bright-num');
+        syncInputPair('flare-core-size', 'flare-core-size-num');
+        syncInputPair('flare-aberration', 'flare-aberration-num');
+        syncInputPair('flare-noise', 'flare-noise-num');
+        syncInputPair('flare-blur', 'flare-blur-num');
+        
+        syncInputPair('crossfilter-intensity', 'crossfilter-intensity-num');
+        syncInputPair('crossfilter-length', 'crossfilter-length-num');
+        syncInputPair('crossfilter-thickness', 'crossfilter-thickness-num');
+        syncInputPair('crossfilter-angle', 'crossfilter-angle-num');
+        syncInputPair('crossfilter-rainbow', 'crossfilter-rainbow-num');
+        syncInputPair('crossfilter-opacity', 'crossfilter-opacity-num');
+        syncInputPair('crossfilter-blur', 'crossfilter-blur-num');
+        syncInputPair('crossfilter-aberration', 'crossfilter-aberration-num');
+        syncInputPair('crossfilter-noise', 'crossfilter-noise-num');
+
+        syncInputPair('date-size', 'date-size-num');
+        syncInputPair('date-glow', 'date-glow-num');
+        syncInputPair('date-noise', 'date-noise-num');
+        
+        document.getElementById('brush-size').addEventListener('input', (e) => {
+            document.getElementById('brush-size-val').textContent = e.target.value;
+        });
+
+        const maskCbIds = [
+            'mask-cb-degrade', 'mask-cb-crossprocess', 'mask-cb-shadow-tint', 
+            'mask-cb-halation', 'mask-cb-aberration', 'mask-cb-noise', 
+            'mask-cb-dust', 'mask-cb-lightleak', 'mask-cb-vignette', 
+            'mask-cb-flare', 'mask-cb-crossfilter', 'mask-cb-datestamp'
+        ];
+        maskCbIds.forEach(id => {
+            document.getElementById(id).addEventListener('change', () => {
+                if (isImageLoaded) { clearTimeout(renderTimeout); renderTimeout = setTimeout(() => applyEffects(), 50); }
+            });
+        });
+
+        // 노이즈 타입 변경 이벤트 추가
+        noiseTypeSelect.addEventListener('change', () => {
+            if (isImageLoaded) { clearTimeout(renderTimeout); renderTimeout = setTimeout(() => applyEffects(), 50); }
+        });
+
+        [flareTypeSelect, flareBlendSelect, crossFilterTypeSelect].forEach(select => {
+            select.addEventListener('change', () => {
+                if (isImageLoaded) { clearTimeout(renderTimeout); renderTimeout = setTimeout(() => applyEffects(), 50); }
+            });
+        });
+
+        maskToggle.addEventListener('change', (e) => {
+            const isVisible = e.target.checked;
+            maskControls.className = isVisible ? "flex flex-col gap-3 transition-opacity" : "flex flex-col gap-3 opacity-50 pointer-events-none transition-opacity";
+            if (isVisible) setActiveTool('mask');
+            else {
+                if (crossFilterToggle.checked) setActiveTool('crossfilter');
+                else if (flareToggle.checked) setActiveTool('flare');
+                else setActiveTool(null);
+            }
+            if (isImageLoaded) renderPreview();
+            if (!isVisible) brushCursor.style.display = 'none';
+        });
+
+        flareToggle.addEventListener('change', (e) => {
+            const isVisible = e.target.checked;
+            flareControls.className = isVisible ? "flex flex-col gap-3 transition-opacity" : "flex flex-col gap-3 opacity-50 pointer-events-none transition-opacity";
+            if (isVisible) setActiveTool('flare');
+            else {
+                if (crossFilterToggle.checked) setActiveTool('crossfilter');
+                else if (maskToggle.checked) setActiveTool('mask');
+                else setActiveTool(null);
+            }
+            if (isImageLoaded) { clearTimeout(renderTimeout); renderTimeout = setTimeout(() => applyEffects(), 50); }
+        });
+
+        crossFilterToggle.addEventListener('change', (e) => {
+            const isChecked = e.target.checked;
+            crossFilterControls.className = isChecked ? "flex flex-col gap-3 transition-opacity" : "flex flex-col gap-3 opacity-50 pointer-events-none transition-opacity";
+            if (isChecked) setActiveTool('crossfilter');
+            else {
+                if (maskToggle.checked) setActiveTool('mask');
+                else if (flareToggle.checked) setActiveTool('flare');
+                else setActiveTool(null);
+            }
+            if (isImageLoaded) { clearTimeout(renderTimeout); renderTimeout = setTimeout(() => applyEffects(), 50); }
+        });
+
+        undoCrossFilterBtn.addEventListener('click', () => {
+            if (crossFlares.length > 0) {
+                crossFlares.pop();
+                if (isImageLoaded) { clearTimeout(renderTimeout); renderTimeout = setTimeout(() => applyEffects(), 50); }
+            }
+        });
+
+        clearCrossFilterBtn.addEventListener('click', () => {
+            crossFlares = [];
+            if (isImageLoaded) { clearTimeout(renderTimeout); renderTimeout = setTimeout(() => applyEffects(), 50); }
+        });
+
+        maskControls.addEventListener('mousedown', () => { if(maskToggle.checked) setActiveTool('mask'); });
+        maskControls.addEventListener('touchstart', () => { if(maskToggle.checked) setActiveTool('mask'); }, {passive: true});
+        flareControls.addEventListener('mousedown', () => { if(flareToggle.checked) setActiveTool('flare'); });
+        flareControls.addEventListener('touchstart', () => { if(flareToggle.checked) setActiveTool('flare'); }, {passive: true});
+        crossFilterControls.addEventListener('mousedown', () => { if(crossFilterToggle.checked) setActiveTool('crossfilter'); });
+        crossFilterControls.addEventListener('touchstart', () => { if(crossFilterToggle.checked) setActiveTool('crossfilter'); }, {passive: true});
+
+        toolBrushBtn.addEventListener('click', () => {
+            isEraserMode = false;
+            toolBrushBtn.className = "flex-1 py-1.5 bg-purple-600 text-white text-xs rounded border border-purple-500 font-medium";
+            toolEraserBtn.className = "flex-1 py-1.5 bg-gray-800 text-gray-400 text-xs rounded border border-gray-700 font-medium hover:bg-gray-700";
+            brushCursor.classList.add('border-white');
+            brushCursor.classList.remove('border-red-500');
+        });
+
+        toolEraserBtn.addEventListener('click', () => {
+            isEraserMode = true;
+            toolEraserBtn.className = "flex-1 py-1.5 bg-purple-600 text-white text-xs rounded border border-purple-500 font-medium";
+            toolBrushBtn.className = "flex-1 py-1.5 bg-gray-800 text-gray-400 text-xs rounded border border-gray-700 font-medium hover:bg-gray-700";
+            brushCursor.classList.add('border-red-500');
+            brushCursor.classList.remove('border-white');
+        });
+
+        showMaskToggle.addEventListener('change', () => {
+            if (isImageLoaded) renderPreview();
+            if (!showMaskToggle.checked) brushCursor.style.display = 'none';
+            setActiveTool(activeTool);
+        });
+
+        clearMaskBtn.addEventListener('click', () => {
+            if (isImageLoaded) {
+                maskCtx.clearRect(0, 0, maskCanvas.width, maskCanvas.height);
+                clearTimeout(renderTimeout);
+                renderTimeout = setTimeout(() => applyEffects(), 50);
+            }
+        });
+
+        function getClientPos(e) {
+            if (e.touches && e.touches.length > 0) return { x: e.touches[0].clientX, y: e.touches[0].clientY };
+            return { x: e.clientX, y: e.clientY };
+        }
+
+        function getInternalPos(e) {
+            const rect = canvas.getBoundingClientRect();
+            const pos = getClientPos(e);
+            const scale = Math.min(rect.width / canvas.width, rect.height / canvas.height);
+            const drawW = canvas.width * scale;
+            const drawH = canvas.height * scale;
+            const offsetX = (rect.width - drawW) / 2 + rect.left;
+            const offsetY = (rect.height - drawH) / 2 + rect.top;
+            
+            return { x: (pos.x - offsetX) / scale, y: (pos.y - offsetY) / scale };
+        }
+
+        function drawMaskStroke(x, y, isLine) {
+            maskCtx.beginPath();
+            maskCtx.lineCap = 'round';
+            maskCtx.lineJoin = 'round';
+            maskCtx.lineWidth = Math.max(5, (canvas.width * brushSizeSlider.value) / 1000); 
+            
+            maskCtx.globalCompositeOperation = isEraserMode ? 'destination-out' : 'source-over';
+            maskCtx.shadowBlur = maskCtx.lineWidth * 0.2;
+            maskCtx.shadowColor = 'black';
+            maskCtx.strokeStyle = 'black';
+            maskCtx.fillStyle = 'black';
+            
+            if (isLine) {
+                maskCtx.moveTo(lastMaskX, lastMaskY);
+                maskCtx.lineTo(x, y);
+                maskCtx.stroke();
+            } else {
+                maskCtx.arc(x, y, maskCtx.lineWidth / 2, 0, Math.PI * 2);
+                maskCtx.fill();
+            }
+        }
+
+        const dropzone = document.getElementById('dropzone');
+        dropzone.addEventListener('click', () => { if (!isImageLoaded) fileInput.click(); });
+        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(e => dropzone.addEventListener(e, preventDefaults, false));
+        function preventDefaults(e) { e.preventDefault(); e.stopPropagation(); }
+        ['dragenter', 'dragover'].forEach(e => dropzone.addEventListener(e, () => dropzone.classList.add('border-purple-500', 'bg-gray-800/50'), false));
+        ['dragleave', 'drop'].forEach(e => dropzone.addEventListener(e, () => dropzone.classList.remove('border-purple-500', 'bg-gray-800/50'), false));
+        dropzone.addEventListener('drop', (e) => {
+            const file = e.dataTransfer.files[0];
+            if (file && file.type.startsWith('image/')) {
+                const dt = new DataTransfer(); dt.items.add(file); fileInput.files = dt.files;
+                fileInput.dispatchEvent(new Event('change'));
+            }
+        }, false);
+
+        canvas.addEventListener('mousedown', handlePointerDown);
+        canvas.addEventListener('touchstart', handlePointerDown, { passive: false });
+        window.addEventListener('mousemove', handlePointerMove);
+        window.addEventListener('touchmove', handlePointerMove, { passive: false });
+        window.addEventListener('mouseup', handlePointerUp);
+        window.addEventListener('touchend', handlePointerUp);
+        canvas.addEventListener('mouseleave', () => { brushCursor.style.display = 'none'; });
+        canvas.addEventListener('mouseenter', () => { 
+            if (activeTool === 'mask' && maskToggle.checked && showMaskToggle.checked && isImageLoaded) brushCursor.style.display = 'block'; 
+        });
+
+        function handlePointerDown(e) {
+            if (!isImageLoaded) return;
+            
+            if (activeTool === 'mask' && maskToggle.checked) {
+                if (!showMaskToggle.checked) return; 
+                if (e.cancelable) e.preventDefault();
+                isDrawingMask = true;
+                const pos = getInternalPos(e);
+                lastMaskX = pos.x; 
+                lastMaskY = pos.y;
+                drawMaskStroke(pos.x, pos.y, false);
+                renderPreview();
+            }
+            else if (activeTool === 'flare' && flareToggle.checked) {
+                if (e.cancelable) e.preventDefault();
+                isDraggingFlare = true; 
+                const pos = getClientPos(e);
+                dragStartX = pos.x;
+                dragStartY = pos.y;
+                dragStartFlareX = currentFlareX;
+                dragStartFlareY = currentFlareY;
+            }
+            else if (activeTool === 'crossfilter' && crossFilterToggle.checked) {
+                if (e.cancelable) e.preventDefault();
+                const pos = getInternalPos(e);
+                crossFlares.push({ x: pos.x / canvas.width, y: pos.y / canvas.height });
+                clearTimeout(renderTimeout);
+                renderTimeout = setTimeout(() => applyEffects(), 10);
+            }
+        }
+
+        function handlePointerMove(e) {
+            if (activeTool === 'mask' && maskToggle.checked && showMaskToggle.checked && isImageLoaded) {
+                const rect = canvas.getBoundingClientRect();
+                const pos = getClientPos(e);
+                
+                if (pos.x >= rect.left && pos.x <= rect.right && pos.y >= rect.top && pos.y <= rect.bottom) {
+                    brushCursor.style.display = 'block';
+                    brushCursor.style.left = pos.x + 'px';
+                    brushCursor.style.top = pos.y + 'px';
+                    const scale = Math.min(rect.width / canvas.width, rect.height / canvas.height);
+                    const baseLineWidth = Math.max(5, (canvas.width * brushSizeSlider.value) / 1000);
+                    const onScreenSize = baseLineWidth * scale;
+                    brushCursor.style.width = onScreenSize + 'px';
+                    brushCursor.style.height = onScreenSize + 'px';
+                } else {
+                    brushCursor.style.display = 'none';
+                }
+            } else {
+                brushCursor.style.display = 'none';
+            }
+
+            if (isDrawingMask) {
+                if (e.cancelable) e.preventDefault();
+                const pos = getInternalPos(e);
+                drawMaskStroke(pos.x, pos.y, true);
+                lastMaskX = pos.x; 
+                lastMaskY = pos.y;
+                renderPreview(); 
+            } 
+            else if (isDraggingFlare) {
+                if (e.cancelable) e.preventDefault();
+                const rect = canvas.getBoundingClientRect();
+                const pos = getClientPos(e);
+                let pctDeltaX = ((pos.x - dragStartX) / rect.width) * 100;
+                let pctDeltaY = ((pos.y - dragStartY) / rect.height) * 100;
+                currentFlareX = Math.max(-100, Math.min(200, dragStartFlareX + pctDeltaX));
+                currentFlareY = Math.max(-100, Math.min(200, dragStartFlareY + pctDeltaY));
+                clearTimeout(renderTimeout);
+                renderTimeout = setTimeout(() => applyEffects(), 10);
+            }
+        }
+
+        function handlePointerUp() {
+            if (isDrawingMask) {
+                isDrawingMask = false;
+                clearTimeout(renderTimeout);
+                renderTimeout = setTimeout(() => applyEffects(), 50);
+            }
+            isDraggingFlare = false;
+        }
+
+        datestampToggle.addEventListener('change', (e) => {
+            const isChecked = e.target.checked;
+            dateInput.disabled = !isChecked;
+            datePosSelect.disabled = !isChecked;
+            dateSizeSlider.disabled = !isChecked;
+            dateSizeNum.disabled = !isChecked;
+            dateGlowSlider.disabled = !isChecked;
+            dateGlowNum.disabled = !isChecked;
+            dateNoiseSlider.disabled = !isChecked;
+            dateNoiseNum.disabled = !isChecked;
+            dateControls.className = isChecked ? "flex flex-col gap-2 transition-opacity" : "flex flex-col gap-2 opacity-50 pointer-events-none transition-opacity";
+            if (isImageLoaded) { clearTimeout(renderTimeout); renderTimeout = setTimeout(() => applyEffects(), 50); }
+        });
+
+        [dateInput, datePosSelect].forEach(el => {
+            el.addEventListener('change', () => {
+                if (isImageLoaded) { clearTimeout(renderTimeout); renderTimeout = setTimeout(() => applyEffects(), 50); }
+            });
+        });
+
+        downloadBtn.addEventListener('click', downloadImage);
+
+        function generateDustAndScratches() {
+            dustParticles = Array.from({length: 200}, () => ({
+                x: Math.random(), y: Math.random(), 
+                size: Math.random() * 2 + 0.5, 
+                opacity: Math.random() * 0.6 + 0.2, 
+                isDark: Math.random() > 0.8
+            }));
+            scratchLines = Array.from({length: 40}, () => ({
+                x: Math.random(), y: Math.random(), 
+                len: Math.random() * 0.3 + 0.1, 
+                angle: Math.random() * Math.PI, 
+                opacity: Math.random() * 0.4 + 0.1, 
+                isDark: Math.random() > 0.6
+            }));
+        }
+
+        function handleImageUpload(e) {
+            const file = e.target?.files?.[0]; 
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                originalImage.onload = () => {
+                    isImageLoaded = true;
+                    placeholder.classList.add('hidden');
+                    canvas.classList.remove('hidden');
+                    downloadBtn.disabled = false;
+                    dropzone.classList.remove('cursor-pointer'); 
+                    
+                    const filterIds = ['degrade', 'crossprocess', 'shadow-tint', 'halation', 'aberration', 'noise', 'dust', 'lightleak', 'vignette'];
+                    filterIds.forEach(id => {
+                        const slider = document.getElementById(id);
+                        const num = document.getElementById(id + '-num');
+                        slider.value = 0; num.value = 0;
+                        if (id === 'shadow-tint') updateShadowTintColor();
+                    });
+                    
+                    maskCbIds.forEach(id => { document.getElementById(id).checked = true; });
+                    noiseTypeSelect.value = 'analog'; // 노이즈 타입 리셋
+
+                    maskToggle.checked = false;
+                    maskControls.className = "flex flex-col gap-3 opacity-50 pointer-events-none transition-opacity";
+                    showMaskToggle.checked = true;
+
+                    flareToggle.checked = false;
+                    flareTypeSelect.value = "cool";
+                    flareBlendSelect.value = "screen";
+                    
+                    const flareResetValues = {
+                        'flare-opacity': 60, 'flare-size': 100, 'flare-thickness': 100,
+                        'flare-core-bright': 0, 'flare-core-size': 15, 'flare-aberration': 10,
+                        'flare-noise': 45, 'flare-blur': 0
+                    };
+                    for (const [id, val] of Object.entries(flareResetValues)) {
+                        document.getElementById(id).value = val;
+                        document.getElementById(id + '-num').value = val;
+                    }
+
+                    currentFlareX = 50; currentFlareY = 50;
+                    flareControls.className = "flex flex-col gap-3 opacity-50 pointer-events-none transition-opacity";
+                    
+                    // 크로스 필터 초기화
+                    crossFilterToggle.checked = false;
+                    crossFlares = [];
+                    crossFilterTypeSelect.value = "rainbow";
+                    document.getElementById('crossfilter-intensity').value = 80;
+                    document.getElementById('crossfilter-intensity-num').value = 80;
+                    document.getElementById('crossfilter-length').value = 100;
+                    document.getElementById('crossfilter-length-num').value = 100;
+                    document.getElementById('crossfilter-thickness').value = 15;
+                    document.getElementById('crossfilter-thickness-num').value = 15;
+                    document.getElementById('crossfilter-angle').value = 0;
+                    document.getElementById('crossfilter-angle-num').value = 0;
+                    document.getElementById('crossfilter-rainbow').value = 150;
+                    document.getElementById('crossfilter-rainbow-num').value = 150;
+                    document.getElementById('crossfilter-opacity').value = 100;
+                    document.getElementById('crossfilter-opacity-num').value = 100;
+                    document.getElementById('crossfilter-blur').value = 0;
+                    document.getElementById('crossfilter-blur-num').value = 0;
+                    document.getElementById('crossfilter-aberration').value = 0;
+                    document.getElementById('crossfilter-aberration-num').value = 0;
+                    document.getElementById('crossfilter-noise').value = 0;
+                    document.getElementById('crossfilter-noise-num').value = 0;
+                    crossFilterControls.className = "flex flex-col gap-3 opacity-50 pointer-events-none transition-opacity";
+
+                    setActiveTool(null);
+
+                    datestampToggle.checked = false;
+                    dateInput.disabled = true; datePosSelect.disabled = true;
+                    dateSizeSlider.disabled = true; dateSizeNum.disabled = true;
+                    dateGlowSlider.disabled = true; dateGlowNum.disabled = true;
+                    dateNoiseSlider.disabled = true; dateNoiseNum.disabled = true;
+                    
+                    dateSizeSlider.value = 100; dateSizeNum.value = 100;
+                    dateGlowSlider.value = 50; dateGlowNum.value = 50;
+                    dateNoiseSlider.value = 30; dateNoiseNum.value = 30;
+                    
+                    dateControls.className = "flex flex-col gap-2 opacity-50 pointer-events-none transition-opacity";
+                    
+                    generateDustAndScratches();
+                    
+                    let w = originalImage.width;
+                    let h = originalImage.height;
+                    const maxDim = 1600;
+                    if (w > maxDim || h > maxDim) {
+                        if (w > h) { h = Math.floor(h * (maxDim / w)); w = maxDim; } 
+                        else { w = Math.floor(w * (maxDim / h)); h = maxDim; }
+                    }
+                    
+                    canvas.width = w; canvas.height = h;
+                    maskCanvas.width = w; maskCanvas.height = h;
+                    maskCtx.clearRect(0, 0, w, h);
+                    
+                    applyEffects(); 
+                };
+                originalImage.src = event.target.result;
+            };
+            reader.readAsDataURL(file);
+        }
+
+        function renderPreview() {
+            if (!isImageLoaded) return;
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.imageSmoothingEnabled = true;
+            ctx.drawImage(effectCanvas, 0, 0, canvas.width, canvas.height);
+
+            if (showMaskToggle.checked) {
+                ctx.save();
+                const tempMask = document.createElement('canvas');
+                tempMask.width = canvas.width; tempMask.height = canvas.height;
+                const tmCtx = tempMask.getContext('2d');
+                tmCtx.drawImage(maskCanvas, 0, 0);
+                tmCtx.globalCompositeOperation = 'source-in';
+                tmCtx.fillStyle = 'rgba(255, 0, 0, 0.4)';
+                tmCtx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.drawImage(tempMask, 0, 0);
+                ctx.restore();
+            }
+        }
+
+        function applyEffects(onComplete = null, targetDim = null) {
+            if (!isImageLoaded) return;
+            if (!isDraggingFlare && !isDrawingMask && !onComplete) loading.classList.remove('hidden');
+            
+            // 현재 설정된 노이즈 질감 타입 획득
+            const noiseType = document.getElementById('noise-type').value;
+            
+            setTimeout(() => {
+                let w = originalImage.width;
+                let h = originalImage.height;
+                const maxDim = targetDim !== null ? targetDim : 1600;
+
+                if (maxDim > 0 && (w > maxDim || h > maxDim)) {
+                    if (w > h) { h = Math.floor(h * (maxDim / w)); w = maxDim; } 
+                    else { w = Math.floor(w * (maxDim / h)); h = maxDim; }
+                }
+
+                const resScale = Math.max(w, h) / 1600;
+
+                const degradeAmt = parseFloat(document.getElementById('degrade-num').value) || 0;
+                const crossProcessAmt = parseFloat(document.getElementById('crossprocess-num').value) || 0;
+                const shadowTintAmt = parseFloat(document.getElementById('shadow-tint-num').value) || 0;
+                const halationAmt = parseFloat(document.getElementById('halation-num').value) || 0;
+                const aberrationAmt = (parseFloat(document.getElementById('aberration-num').value) || 0) * resScale;
+                const noiseAmt = parseFloat(document.getElementById('noise-num').value) || 0;
+                const dustAmt = parseFloat(document.getElementById('dust-num').value) || 0;
+                const lightLeakAmt = parseFloat(document.getElementById('lightleak-num').value) || 0;
+                const vignetteAmt = parseFloat(document.getElementById('vignette-num').value) || 0;
+                
+                const useFlare = flareToggle.checked;
+                const flareType = flareTypeSelect.value;
+                const flareOpacityAmt = parseFloat(document.getElementById('flare-opacity-num').value) || 0;
+                const flareSizeAmt = parseFloat(document.getElementById('flare-size-num').value) || 0;
+                const flareThicknessAmt = parseFloat(document.getElementById('flare-thickness-num').value) || 0;
+                const flareCoreBrightAmt = (parseFloat(document.getElementById('flare-core-bright-num').value) || 0) * 2;
+                const flareCoreSizeAmt = (parseFloat(document.getElementById('flare-core-size-num').value) || 0) * 2;
+                const flareAberrationAmt = (parseFloat(document.getElementById('flare-aberration-num').value) || 0) * resScale;
+                const flareNoiseAmt = parseFloat(document.getElementById('flare-noise-num').value) || 0;
+                const flareBlurAmt = (parseFloat(document.getElementById('flare-blur-num').value) || 0) * resScale;
+                const flareBlendMode = flareBlendSelect.value;
+                const flareXAmt = currentFlareX;
+                const flareYAmt = currentFlareY;
+                
+                const useCrossFilter = crossFilterToggle.checked;
+                const crossFilterType = crossFilterTypeSelect.value;
+                const crossFilterIntensityAmt = parseFloat(document.getElementById('crossfilter-intensity-num').value) || 0;
+                const crossFilterLengthAmt = parseFloat(document.getElementById('crossfilter-length-num').value) || 0;
+                const crossFilterThicknessAmt = parseFloat(document.getElementById('crossfilter-thickness-num').value) || 0;
+                const crossFilterAngleAmt = parseFloat(document.getElementById('crossfilter-angle-num').value) || 0;
+                const crossFilterRainbowAmt = parseFloat(document.getElementById('crossfilter-rainbow-num').value) || 0;
+                
+                let crossFilterOpacityVal = parseFloat(document.getElementById('crossfilter-opacity-num')?.value);
+                const crossFilterOpacityAmt = isNaN(crossFilterOpacityVal) ? 1 : crossFilterOpacityVal / 100;
+                const crossFilterBlurAmt = parseFloat(document.getElementById('crossfilter-blur-num')?.value) || 0;
+                const crossFilterAberrationAmt = parseFloat(document.getElementById('crossfilter-aberration-num')?.value) || 0;
+                const crossFilterNoiseAmt = parseFloat(document.getElementById('crossfilter-noise-num')?.value) || 0;
+
+                const useDatestamp = datestampToggle.checked;
+                const customDate = dateInput.value;
+                const datePos = datePosSelect.value;
+                const dateSizeAmt = (parseFloat(document.getElementById('date-size-num').value) || 100) / 100;
+                const dateGlowAmt = parseFloat(document.getElementById('date-glow-num').value) || 0;
+                const dateNoiseAmt = parseFloat(document.getElementById('date-noise-num').value) || 0;
+
+                const m_degrade = document.getElementById('mask-cb-degrade').checked;
+                const m_cp = document.getElementById('mask-cb-crossprocess').checked;
+                const m_tint = document.getElementById('mask-cb-shadow-tint').checked;
+                const m_halation = document.getElementById('mask-cb-halation').checked;
+                const m_aberration = document.getElementById('mask-cb-aberration').checked;
+                const m_noise = document.getElementById('mask-cb-noise').checked;
+                const m_dust = document.getElementById('mask-cb-dust').checked;
+                const m_leak = document.getElementById('mask-cb-lightleak').checked;
+                const m_vignette = document.getElementById('mask-cb-vignette').checked;
+                const m_flare = document.getElementById('mask-cb-flare').checked;
+                const m_crossfilter = document.getElementById('mask-cb-crossfilter').checked;
+                const m_date = document.getElementById('mask-cb-datestamp').checked;
+
+                const offCanvas = document.createElement('canvas');
+                offCanvas.width = w; offCanvas.height = h;
+                const offCtx = offCanvas.getContext('2d', { willReadFrequently: true });
+
+                const restoreCanvas = document.createElement('canvas');
+                restoreCanvas.width = w; restoreCanvas.height = h;
+                const restoreCtx = restoreCanvas.getContext('2d', { willReadFrequently: true });
+
+                let scaledMaskCanvas = maskCanvas;
+                if (maskCanvas.width !== w || maskCanvas.height !== h) {
+                    scaledMaskCanvas = document.createElement('canvas');
+                    scaledMaskCanvas.width = w; scaledMaskCanvas.height = h;
+                    scaledMaskCanvas.getContext('2d').drawImage(maskCanvas, 0, 0, w, h);
+                }
+
+                function applyEffectWithMask(effectFn, isMaskEnabled) {
+                    if (isMaskEnabled) {
+                        restoreCtx.globalCompositeOperation = 'source-over';
+                        restoreCtx.clearRect(0, 0, w, h);
+                        restoreCtx.drawImage(offCanvas, 0, 0);
+                    }
+                    effectFn(); 
+                    if (isMaskEnabled) {
+                        restoreCtx.globalCompositeOperation = 'destination-in';
+                        restoreCtx.drawImage(scaledMaskCanvas, 0, 0, w, h);
+                        offCtx.globalCompositeOperation = 'source-over';
+                        offCtx.drawImage(restoreCanvas, 0, 0, w, h);
+                    }
+                }
+
+                let maskData = scaledMaskCanvas.getContext('2d').getImageData(0, 0, w, h).data;
+                offCtx.drawImage(originalImage, 0, 0, w, h);
+
+                if (degradeAmt > 0) {
+                    applyEffectWithMask(() => {
+                        const pixelScale = 1 - (degradeAmt * 0.008); 
+                        const tempW = Math.max(1, Math.floor(w * pixelScale));
+                        const tempH = Math.max(1, Math.floor(h * pixelScale));
+                        const tempCanvas = document.createElement('canvas');
+                        tempCanvas.width = tempW; tempCanvas.height = tempH;
+                        const tempCtx = tempCanvas.getContext('2d');
+                        const contrast = 100 + degradeAmt * 0.6;
+                        const saturate = 100 - degradeAmt * 0.2;
+                        const sepia = degradeAmt * 0.3;
+                        tempCtx.filter = `contrast(${contrast}%) saturate(${saturate}%) sepia(${sepia}%)`;
+                        tempCtx.drawImage(originalImage, 0, 0, tempW, tempH);
+                        offCtx.imageSmoothingEnabled = false;
+                        offCtx.drawImage(tempCanvas, 0, 0, w, h);
+                    }, m_degrade);
+                }
+
+                if (halationAmt > 0) {
+                    applyEffectWithMask(() => {
+                        const hCanvas = document.createElement('canvas');
+                        hCanvas.width = w; hCanvas.height = h;
+                        const hCtx = hCanvas.getContext('2d');
+                        hCtx.filter = `contrast(300%) brightness(70%)`;
+                        hCtx.drawImage(offCanvas, 0, 0);
+                        hCtx.globalCompositeOperation = 'multiply';
+                        hCtx.fillStyle = '#ff2200';
+                        hCtx.fillRect(0, 0, w, h);
+                        offCtx.globalCompositeOperation = 'screen';
+                        offCtx.filter = `blur(${Math.max(4, w * 0.015)}px)`;
+                        offCtx.globalAlpha = halationAmt / 100;
+                        offCtx.drawImage(hCanvas, 0, 0);
+                        offCtx.filter = 'none';
+                        offCtx.globalAlpha = 1.0;
+                        offCtx.globalCompositeOperation = 'source-over';
+                    }, m_halation);
+                }
+
+                if (noiseAmt > 0 || aberrationAmt > 0 || shadowTintAmt !== 0 || crossProcessAmt > 0) {
+                    const imageData = offCtx.getImageData(0, 0, w, h);
+                    const data = imageData.data;
+                    const originalData = new Uint8ClampedArray(data);
+                    
+                    const noiseLevel = noiseAmt * 1.5;
+                    const cp = crossProcessAmt / 100;
+                    const shiftAmt = Math.round(aberrationAmt);
+
+                    for (let y = 0; y < h; y++) {
+                        for (let x = 0; x < w; x++) {
+                            const i = (y * w + x) * 4;
+                            let mAlpha = maskData ? (maskData[i + 3] / 255) : 0;
+                            let r = originalData[i], g = originalData[i+1], b = originalData[i+2];
+
+                            if (aberrationAmt > 0) {
+                                let abWeight = m_aberration ? (1 - mAlpha) : 1;
+                                let rx = Math.max(0, Math.min(w - 1, x - shiftAmt));
+                                let bx = Math.max(0, Math.min(w - 1, x + shiftAmt));
+                                let abR = originalData[(y * w + rx) * 4];
+                                let abB = originalData[(y * w + bx) * 4 + 2];
+                                r = r * (1 - abWeight) + abR * abWeight;
+                                b = b * (1 - abWeight) + abB * abWeight;
+                            }
+
+                            const luminance = 0.299 * r + 0.587 * g + 0.114 * b;
+
+                            if (cp > 0) {
+                                let cpWeight = m_cp ? (1 - mAlpha) : 1;
+                                let rN = r / 255, gN = g / 255;
+                                let rCurve = rN < 0.5 ? 2 * rN * rN : 1 - 2 * Math.pow(1 - rN, 2);
+                                let gCurve = gN < 0.5 ? 2 * gN * gN : 1 - 2 * Math.pow(1 - gN, 2);
+                                let outR = r + (rCurve * 255 - r) * cp;
+                                let outG = g + (gCurve * 255 - g) * (cp * 0.7);
+                                let bShift = (1 - luminance / 255) * 80 - (luminance / 255) * 40;
+                                let outB = Math.min(255, Math.max(0, b + bShift * cp));
+                                r = r * (1 - cpWeight) + outR * cpWeight;
+                                g = g * (1 - cpWeight) + outG * cpWeight;
+                                b = b * (1 - cpWeight) + outB * cpWeight;
+                            }
+
+                            if (shadowTintAmt !== 0) {
+                                let tintWeight = m_tint ? (1 - mAlpha) : 1;
+                                const shadowFactor = Math.max(0, 1 - (luminance / 200)); 
+                                const strength = Math.pow(shadowFactor, 2); 
+                                let outR, outG, outB;
+                                if (shadowTintAmt > 0) {
+                                    outR = Math.min(255, r + shadowTintAmt * strength);
+                                    outG = Math.max(0, g - (shadowTintAmt * 0.3) * strength);
+                                    outB = Math.min(255, b + (shadowTintAmt * 0.5) * strength);
+                                } else {
+                                    outR = Math.max(0, r + (shadowTintAmt * 0.3) * strength);
+                                    outG = Math.min(255, g - shadowTintAmt * strength);
+                                    outB = Math.min(255, b - (shadowTintAmt * 0.5) * strength);
+                                }
+                                r = r * (1 - tintWeight) + outR * tintWeight;
+                                g = g * (1 - tintWeight) + outG * tintWeight;
+                                b = b * (1 - tintWeight) + outB * tintWeight;
+                            }
+
+                            // 픽셀 루프 내 노이즈 적용 (거친 입자 제외)
+                            if (noiseAmt > 0 && noiseType !== 'coarse') {
+                                let noiseWeight = m_noise ? (1 - mAlpha) : 1;
+                                let n = 0, nr = 0, ng = 0, nb = 0;
+                                
+                                if (noiseType === 'analog') {
+                                    // 필름 감광 특성을 모방하여 중간 톤에서 노이즈가 도드라짐
+                                    const lumNormalized = luminance / 255;
+                                    const filmCurve = 1.0 - Math.pow(2.0 * lumNormalized - 1.0, 2);
+                                    n = (Math.random() - 0.5) * noiseLevel * (0.4 + 0.6 * filmCurve);
+                                    nr = ng = nb = n;
+                                } else if (noiseType === 'color') {
+                                    // 채널별 독립 노이즈로 디지털 열화 구현
+                                    nr = (Math.random() - 0.5) * noiseLevel;
+                                    ng = (Math.random() - 0.5) * noiseLevel;
+                                    nb = (Math.random() - 0.5) * noiseLevel;
+                                } else {
+                                    // 기본 균일 노이즈
+                                    n = (Math.random() - 0.5) * noiseLevel;
+                                    nr = ng = nb = n;
+                                }
+                                
+                                r = Math.max(0, Math.min(255, r + nr * noiseWeight));
+                                g = Math.max(0, Math.min(255, g + ng * noiseWeight));
+                                b = Math.max(0, Math.min(255, b + nb * noiseWeight));
+                            }
+                            
+                            data[i] = r; data[i + 1] = g; data[i + 2] = b;
+                        }
+                    }
+                    offCtx.putImageData(imageData, 0, 0);
+                }
+
+                // 픽셀 루프 바깥에서 적용: 거친 필름 입자 (Coarse Grain)
+                if (noiseAmt > 0 && noiseType === 'coarse') {
+                    applyEffectWithMask(() => {
+                        // 해상도에 맞춰 노이즈 입자 스케일을 계산
+                        const grainSize = Math.max(1.5, w * 0.0025);
+                        const tw = Math.ceil(w / grainSize);
+                        const th = Math.ceil(h / grainSize);
+                        const gCanvas = document.createElement('canvas');
+                        gCanvas.width = tw; gCanvas.height = th;
+                        const gCtx = gCanvas.getContext('2d');
+                        
+                        // 50% 회색 캔버스 준비
+                        gCtx.fillStyle = 'rgb(128,128,128)';
+                        gCtx.fillRect(0, 0, tw, th);
+                        
+                        const gData = gCtx.getImageData(0, 0, tw, th);
+                        const d = gData.data;
+                        const amt = noiseAmt * 2.5; 
+                        
+                        // 무작위 노이즈 그리기
+                        for (let i = 0; i < d.length; i+=4) {
+                            const val = (Math.random() - 0.5) * amt;
+                            d[i] = Math.max(0, Math.min(255, 128 + val));
+                            d[i+1] = Math.max(0, Math.min(255, 128 + val));
+                            d[i+2] = Math.max(0, Math.min(255, 128 + val));
+                        }
+                        gCtx.putImageData(gData, 0, 0);
+                        
+                        // 크기를 확대(nearest-neighbor)하여 소프트 라이트로 합성
+                        offCtx.globalCompositeOperation = 'soft-light';
+                        offCtx.globalAlpha = 0.8; 
+                        offCtx.imageSmoothingEnabled = false; // 도트(입자) 느낌 유지
+                        offCtx.drawImage(gCanvas, 0, 0, w, h);
+                        offCtx.imageSmoothingEnabled = true;
+                        offCtx.globalAlpha = 1.0;
+                        offCtx.globalCompositeOperation = 'source-over';
+                    }, m_noise);
+                }
+
+                if (dustAmt > 0) {
+                    applyEffectWithMask(() => {
+                        const intensity = dustAmt / 100;
+                        const activeDust = Math.floor(dustParticles.length * intensity);
+                        for(let i=0; i<activeDust; i++) {
+                            const p = dustParticles[i];
+                            offCtx.fillStyle = p.isDark ? `rgba(20,20,20,${p.opacity})` : `rgba(240,240,240,${p.opacity})`;
+                            offCtx.beginPath();
+                            offCtx.arc(p.x * w, p.y * h, p.size * Math.max(1, w/1000), 0, Math.PI*2);
+                            offCtx.fill();
+                        }
+                        
+                        const activeScratches = Math.floor(scratchLines.length * intensity);
+                        offCtx.lineWidth = Math.max(1, w/1500);
+                        for(let i=0; i<activeScratches; i++) {
+                            const s = scratchLines[i];
+                            offCtx.strokeStyle = s.isDark ? `rgba(0,0,0,${s.opacity * 0.7})` : `rgba(255,255,255,${s.opacity * 0.5})`;
+                            offCtx.beginPath();
+                            const sx = s.x * w; const sy = s.y * h;
+                            const slen = s.len * Math.max(w,h) * 0.5;
+                            offCtx.moveTo(sx, sy);
+                            offCtx.lineTo(sx + Math.cos(s.angle)*slen, sy + Math.sin(s.angle)*slen);
+                            offCtx.stroke();
+                        }
+                    }, m_dust);
+                }
+
+                if (lightLeakAmt > 0) {
+                    applyEffectWithMask(() => {
+                        const intensity = lightLeakAmt / 100;
+                        offCtx.globalCompositeOperation = 'screen';
+                        const leak1 = offCtx.createLinearGradient(0, 0, w * 0.35, 0);
+                        leak1.addColorStop(0, `rgba(255, 30, 0, ${intensity * 0.85})`);
+                        leak1.addColorStop(0.5, `rgba(255, 100, 0, ${intensity * 0.4})`);
+                        leak1.addColorStop(1, 'rgba(0,0,0,0)');
+                        offCtx.fillStyle = leak1;
+                        offCtx.fillRect(0, 0, w * 0.35, h);
+
+                        const leak2 = offCtx.createRadialGradient(w, 0, 0, w, 0, Math.max(w, h) * 0.6);
+                        leak2.addColorStop(0, `rgba(255, 150, 50, ${intensity * 0.7})`);
+                        leak2.addColorStop(0.5, `rgba(255, 80, 0, ${intensity * 0.3})`);
+                        leak2.addColorStop(1, 'rgba(0,0,0,0)');
+                        offCtx.fillStyle = leak2;
+                        offCtx.fillRect(w * 0.4, 0, w * 0.6, h * 0.6);
+                        offCtx.globalCompositeOperation = 'source-over';
+                    }, m_leak);
+                }
+
+                if (vignetteAmt > 0) {
+                    applyEffectWithMask(() => {
+                        const outerRadius = Math.sqrt(Math.pow(w/2, 2) + Math.pow(h/2, 2));
+                        const gradient = offCtx.createRadialGradient(w/2, h/2, outerRadius * 0.3, w/2, h/2, outerRadius);
+                        gradient.addColorStop(0, 'rgba(0,0,0,0)');
+                        gradient.addColorStop(1, `rgba(0,0,0,${vignetteAmt / 100 * 0.9})`);
+                        offCtx.globalCompositeOperation = 'multiply';
+                        offCtx.fillStyle = gradient;
+                        offCtx.fillRect(0, 0, w, h);
+                        offCtx.globalCompositeOperation = 'source-over';
+                    }, m_vignette);
+                }
+
+                if (useFlare) {
+                    applyEffectWithMask(() => {
+                        const opacity = flareOpacityAmt / 100;
+                        const fCanvas = document.createElement('canvas');
+                        fCanvas.width = w; fCanvas.height = h;
+                        const fCtx = fCanvas.getContext('2d');
+                        
+                        fCtx.fillStyle = 'black';
+                        fCtx.fillRect(0, 0, w, h);
+                        fCtx.globalCompositeOperation = 'screen'; 
+
+                        const lx = w * (flareXAmt / 100);
+                        const ly = h * (flareYAmt / 100);
+                        const baseRadius = Math.min(w, h) * 0.45 * (flareSizeAmt / 100);
+                        
+                        const t = flareThicknessAmt / 100;
+                        const innerRadius = Math.max(0, baseRadius * (0.85 - 0.15 * t));
+                        const outerRadius = baseRadius * (0.85 + 0.15 * t);
+
+                        const cViol = `rgba(130, 80, 200, ${opacity * 0.7})`;
+                        const cBlue = `rgba(80, 150, 220, ${opacity * 0.8})`;
+                        const cGree = `rgba(100, 200, 120, ${opacity * 0.8})`;
+                        const cYell = `rgba(220, 200, 80, ${opacity * 0.9})`;
+                        const cOran = `rgba(220, 100, 60, ${opacity * 0.8})`;
+
+                        const cWarm1 = `rgba(200, 100, 150, ${opacity * 0.6})`; 
+                        const cWarm2 = `rgba(255, 200, 100, ${opacity * 0.8})`; 
+                        const cWarm3 = `rgba(255, 100, 50, ${opacity * 0.8})`;  
+                        
+                        const cCool1 = `rgba(30, 80, 255, ${opacity * 0.7})`; 
+                        const cCool2 = `rgba(120, 50, 255, ${opacity * 0.8})`; 
+                        const cCool3 = `rgba(0, 200, 220, ${opacity * 0.6})`;
+
+                        let ringGrad = fCtx.createRadialGradient(lx, ly, innerRadius, lx, ly, outerRadius);
+                        
+                        if (flareType === 'warm') {
+                            ringGrad.addColorStop(0, 'rgba(0,0,0,0)');
+                            ringGrad.addColorStop(0.2, cWarm1); 
+                            ringGrad.addColorStop(0.5, cWarm2); 
+                            ringGrad.addColorStop(0.8, cWarm3);  
+                            ringGrad.addColorStop(1, 'rgba(0,0,0,0)');
+                        } else if (flareType === 'rainbow') {
+                            ringGrad.addColorStop(0, 'rgba(0,0,0,0)');
+                            ringGrad.addColorStop(0.1, cViol);
+                            ringGrad.addColorStop(0.3, cBlue);
+                            ringGrad.addColorStop(0.5, cGree);
+                            ringGrad.addColorStop(0.7, cYell);
+                            ringGrad.addColorStop(0.9, cOran);
+                            ringGrad.addColorStop(1, 'rgba(0,0,0,0)');
+                        } else if (flareType === 'cool') {
+                            ringGrad.addColorStop(0, 'rgba(0,0,0,0)');
+                            ringGrad.addColorStop(0.2, cCool1); 
+                            ringGrad.addColorStop(0.5, cCool2); 
+                            ringGrad.addColorStop(0.8, cCool3);  
+                            ringGrad.addColorStop(1, 'rgba(0,0,0,0)');
+                        }
+
+                        fCtx.globalAlpha = 0.2;
+                        fCtx.fillStyle = ringGrad;
+                        fCtx.fillRect(0, 0, w, h);
+
+                        const maxNeedleLength = Math.max(baseRadius * 2.5, outerRadius * 1.5);
+                        fCtx.globalAlpha = 0.8;
+                        fCtx.beginPath();
+                        for (let i = 0; i < 720; i++) {
+                            const angle = (i * Math.PI * 2) / 720 + (Math.random() * 0.01);
+                            const length = maxNeedleLength * (0.6 + Math.random() * 0.4); 
+                            const thickness = Math.random() * 0.002 + 0.0005; 
+                            fCtx.moveTo(lx, ly);
+                            fCtx.lineTo(lx + Math.cos(angle - thickness) * length, ly + Math.sin(angle - thickness) * length);
+                            fCtx.lineTo(lx + Math.cos(angle + thickness) * length, ly + Math.sin(angle + thickness) * length);
+                        }
+                        fCtx.fillStyle = ringGrad;
+                        fCtx.fill();
+
+                        fCtx.globalAlpha = 0.4;
+                        fCtx.beginPath();
+                        for (let i = 0; i < 180; i++) {
+                            const angle = (i * Math.PI * 2) / 180;
+                            const length = maxNeedleLength * (0.8 + Math.random() * 0.4);
+                            const thickness = Math.random() * 0.008 + 0.002; 
+                            fCtx.moveTo(lx, ly);
+                            fCtx.lineTo(lx + Math.cos(angle - thickness) * length, ly + Math.sin(angle - thickness) * length);
+                            fCtx.lineTo(lx + Math.cos(angle + thickness) * length, ly + Math.sin(angle + thickness) * length);
+                        }
+                        fCtx.fillStyle = ringGrad;
+                        fCtx.fill();
+                        fCtx.globalAlpha = 1.0; 
+
+                        if (flareCoreBrightAmt > 0) {
+                            const coreOpacity = flareCoreBrightAmt / 100;
+                            const coreRadius = Math.min(w, h) * 0.45 * (flareSizeAmt / 100) * (flareCoreSizeAmt / 100);
+                            const coreGrad = fCtx.createRadialGradient(lx, ly, 0, lx, ly, coreRadius);
+                            if (flareType === 'cool') {
+                                coreGrad.addColorStop(0, `rgba(255, 255, 255, ${coreOpacity})`);
+                                coreGrad.addColorStop(0.15, `rgba(180, 230, 255, ${coreOpacity * 0.8})`);
+                                coreGrad.addColorStop(0.5, `rgba(50, 150, 255, ${coreOpacity * 0.3})`);
+                                coreGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+                            } else {
+                                coreGrad.addColorStop(0, `rgba(255, 255, 255, ${coreOpacity})`);
+                                coreGrad.addColorStop(0.15, `rgba(255, 230, 180, ${coreOpacity * 0.8})`);
+                                coreGrad.addColorStop(0.5, `rgba(255, 150, 50, ${coreOpacity * 0.3})`);
+                                coreGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+                            }
+                            fCtx.fillStyle = coreGrad;
+                            fCtx.beginPath();
+                            fCtx.arc(lx, ly, coreRadius, 0, Math.PI * 2);
+                            fCtx.fill();
+                        }
+
+                        const fData = fCtx.getImageData(0, 0, w, h);
+                        const fd = fData.data;
+                        const fOrig = new Uint8ClampedArray(fd);
+                        const fShift = Math.round(flareAberrationAmt);
+                        const fNoiseLevel = flareNoiseAmt;
+
+                        for (let y = 0; y < h; y++) {
+                            for (let x = 0; x < w; x++) {
+                                const i = (y * w + x) * 4;
+                                let rx = Math.max(0, Math.min(w - 1, x - fShift));
+                                let bx = Math.max(0, Math.min(w - 1, x + fShift));
+                                let r = fOrig[(y * w + rx) * 4];
+                                let g = fOrig[i + 1];
+                                let b = fOrig[(y * w + bx) * 4 + 2];
+                                
+                                if (r > 0 || g > 0 || b > 0) {
+                                    const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+                                    const noise = (Math.random() - 0.5) * fNoiseLevel * (0.3 + 0.7 * (lum / 255));
+                                    fd[i] = Math.max(0, Math.min(255, r + noise));
+                                    fd[i+1] = Math.max(0, Math.min(255, g + noise));
+                                    fd[i+2] = Math.max(0, Math.min(255, b + noise));
+                                }
+                            }
+                        }
+                        fCtx.putImageData(fData, 0, 0);
+
+                        offCtx.globalCompositeOperation = flareBlendMode;
+                        if (flareBlurAmt > 0) offCtx.filter = `blur(${flareBlurAmt}px)`;
+                        offCtx.drawImage(fCanvas, 0, 0);
+                        offCtx.filter = 'none';
+                        offCtx.globalCompositeOperation = 'source-over';
+                    }, m_flare);
+                }
+
+                if (useCrossFilter && crossFlares.length > 0) {
+                    applyEffectWithMask(() => {
+                        const intensity = crossFilterIntensityAmt / 100;
+                        const len = Math.max(w, h) * (crossFilterLengthAmt / 100) * 0.5;
+                        const maxThickness = Math.max(w, h) * 0.05;
+                        const baseThickness = Math.max(2, (crossFilterThicknessAmt / 100) * maxThickness);
+                        const angleRad = (crossFilterAngleAmt * Math.PI) / 180;
+                        const rainbow = crossFilterRainbowAmt / 100;
+
+                        const cCanvas = document.createElement('canvas');
+                        cCanvas.width = w; cCanvas.height = h;
+                        const cCtx = cCanvas.getContext('2d');
+                        cCtx.globalCompositeOperation = 'screen';
+
+                        crossFlares.forEach(flare => {
+                            const fx = flare.x * w;
+                            const fy = flare.y * h;
+
+                            cCtx.save();
+                            cCtx.translate(fx, fy);
+                            cCtx.rotate(angleRad);
+
+                            for(let i=0; i<4; i++) {
+                                cCtx.rotate(Math.PI / 2);
+                                cCtx.save();
+                                
+                                const grad = cCtx.createLinearGradient(0, 0, len, 0);
+                                const rAmt = rainbow;
+                                const wAmt = 1 - rainbow;
+                                const color = (r, g, b, a) => `rgba(${r*rAmt + 255*wAmt}, ${g*rAmt + 255*wAmt}, ${b*rAmt + 255*wAmt}, ${a})`;
+                                
+                                if (crossFilterType === 'rainbow') {
+                                    grad.addColorStop(0, color(255,255,255, intensity));
+                                    grad.addColorStop(0.05, color(255,255,255, intensity * 0.9));
+                                    grad.addColorStop(0.15, color(255,255,100, intensity * 0.7));
+                                    grad.addColorStop(0.3, color(255,50,50, intensity * 0.5));
+                                    grad.addColorStop(0.5, color(50,255,50, intensity * 0.3));
+                                    grad.addColorStop(0.7, color(50,100,255, intensity * 0.15));
+                                    grad.addColorStop(0.9, color(150,50,255, intensity * 0.05));
+                                    grad.addColorStop(1, color(0,0,0, 0));
+                                } else if (crossFilterType === 'cool') {
+                                    grad.addColorStop(0, color(255,255,255, intensity));
+                                    grad.addColorStop(0.05, color(200,240,255, intensity * 0.9));
+                                    grad.addColorStop(0.2, color(100,200,255, intensity * 0.7));
+                                    grad.addColorStop(0.5, color(50,150,255, intensity * 0.4));
+                                    grad.addColorStop(0.8, color(50,50,255, intensity * 0.15));
+                                    grad.addColorStop(1, color(0,0,0, 0));
+                                } else if (crossFilterType === 'warm') {
+                                    grad.addColorStop(0, color(255,255,255, intensity));
+                                    grad.addColorStop(0.05, color(255,240,200, intensity * 0.9));
+                                    grad.addColorStop(0.2, color(255,200,100, intensity * 0.7));
+                                    grad.addColorStop(0.5, color(255,100,50, intensity * 0.4));
+                                    grad.addColorStop(0.8, color(255,50,50, intensity * 0.15));
+                                    grad.addColorStop(1, color(0,0,0, 0));
+                                }
+
+                                cCtx.fillStyle = grad;
+                                
+                                cCtx.beginPath();
+                                cCtx.ellipse(0, 0, len, baseThickness, 0, -Math.PI / 2, Math.PI / 2);
+                                cCtx.fill();
+                                cCtx.restore();
+                            }
+                            
+                            cCtx.beginPath();
+                            const centerGrad = cCtx.createRadialGradient(0,0,0, 0,0, len * 0.1);
+                            centerGrad.addColorStop(0, `rgba(255,255,255,${intensity})`);
+                            centerGrad.addColorStop(1, `rgba(255,255,255,0)`);
+                            cCtx.fillStyle = centerGrad;
+                            cCtx.arc(0, 0, len * 0.1, 0, Math.PI*2);
+                            cCtx.fill();
+
+                            cCtx.restore();
+                        });
+
+                        const cbAmt = crossFilterBlurAmt * resScale; 
+                        const caAmt = crossFilterAberrationAmt * resScale;
+                        const cnAmt = crossFilterNoiseAmt * 5; 
+
+                        if (caAmt > 0 || cnAmt > 0) {
+                            const cData = cCtx.getImageData(0, 0, w, h);
+                            const cd = cData.data;
+                            const cOrig = new Uint8ClampedArray(cd);
+                            const shift = Math.round(caAmt);
+                            
+                            for (let y = 0; y < h; y++) {
+                                for (let x = 0; x < w; x++) {
+                                    const i = (y * w + x) * 4;
+                                    
+                                    if (cd[i+3] > 0) {
+                                        let rx = Math.max(0, Math.min(w - 1, x - shift));
+                                        let bx = Math.max(0, Math.min(w - 1, x + shift));
+                                        
+                                        let r = cOrig[(y * w + rx) * 4];
+                                        let g = cOrig[i + 1];
+                                        let b = cOrig[(y * w + bx) * 4 + 2];
+                                        
+                                        if (cnAmt > 0) {
+                                            const noise = (Math.random() - 0.5) * cnAmt;
+                                            r += noise;
+                                            g += noise;
+                                            b += noise;
+                                        }
+                                        
+                                        cd[i] = Math.max(0, Math.min(255, r));
+                                        cd[i+1] = Math.max(0, Math.min(255, g));
+                                        cd[i+2] = Math.max(0, Math.min(255, b));
+                                    }
+                                }
+                            }
+                            cCtx.putImageData(cData, 0, 0);
+                        }
+
+                        offCtx.globalCompositeOperation = 'screen';
+                        offCtx.globalAlpha = crossFilterOpacityAmt;
+                        if (cbAmt > 0) offCtx.filter = `blur(${cbAmt}px)`;
+                        offCtx.drawImage(cCanvas, 0, 0);
+                        offCtx.filter = 'none';
+                        offCtx.globalAlpha = 1.0;
+                        offCtx.globalCompositeOperation = 'source-over';
+                    }, m_crossfilter);
+                }
+
+                if (useDatestamp) {
+                    applyEffectWithMask(() => {
+                        let yy = '00', mm = '01', dd = '01';
+                        if (customDate) {
+                            const parts = customDate.split('-');
+                            if (parts.length === 3) {
+                                yy = parts[0].slice(2); mm = parts[1]; dd = parts[2];
+                            }
+                        } else {
+                            const today = new Date();
+                            yy = String(today.getFullYear()).slice(2);
+                            mm = String(today.getMonth() + 1);
+                            dd = String(today.getDate());
+                        }
+                        mm = mm.padStart(2, ' '); dd = dd.padStart(2, ' ');
+                        const dateString = `'${yy} ${mm} ${dd}`;
+                        
+                        const fontSize = Math.round(Math.max(16, h * 0.035) * dateSizeAmt);
+                        
+                        const dCanvas = document.createElement('canvas');
+                        dCanvas.width = w; dCanvas.height = h;
+                        const dCtx = dCanvas.getContext('2d', { willReadFrequently: true });
+                        
+                        dCtx.font = `bold ${fontSize}px "Courier New", Courier, monospace`;
+                        const paddingX = fontSize * 1.5; const paddingY = fontSize;
+                        let tx, ty;
+
+                        switch (datePos) {
+                            case 'br': tx = w - paddingX; ty = h - paddingY; dCtx.textAlign = 'right'; dCtx.textBaseline = 'bottom'; break;
+                            case 'bl': tx = paddingX; ty = h - paddingY; dCtx.textAlign = 'left'; dCtx.textBaseline = 'bottom'; break;
+                            case 'tr': tx = w - paddingX; ty = paddingY; dCtx.textAlign = 'right'; dCtx.textBaseline = 'top'; break;
+                            case 'tl': tx = paddingX; ty = paddingY; dCtx.textAlign = 'left'; dCtx.textBaseline = 'top'; break;
+                            default: tx = w - paddingX; ty = h - paddingY; dCtx.textAlign = 'right'; dCtx.textBaseline = 'bottom';
+                        }
+                        
+                        const glowScale = dateGlowAmt / 50;
+                        dCtx.fillStyle = '#ffaa33';
+                        
+                        if (glowScale > 0) {
+                            dCtx.shadowColor = 'rgba(255, 30, 0, 0.8)';
+                            dCtx.shadowBlur = fontSize * 0.6 * glowScale;
+                            dCtx.fillText(dateString, tx, ty);
+                            
+                            dCtx.shadowBlur = fontSize * 0.2 * glowScale;
+                            dCtx.fillText(dateString, tx, ty);
+                        }
+                        
+                        dCtx.shadowColor = 'transparent';
+                        dCtx.shadowBlur = 0;
+                        dCtx.fillText(dateString, tx, ty);
+
+                        if (dateNoiseAmt > 0) {
+                            const metrics = dCtx.measureText(dateString);
+                            const textWidth = metrics.width;
+                            const margin = fontSize * 2 * Math.max(1, glowScale);
+                            
+                            let bx = tx, by = ty;
+                            if (dCtx.textAlign === 'right') bx -= textWidth;
+                            else if (dCtx.textAlign === 'center') bx -= textWidth / 2;
+                            if (dCtx.textBaseline === 'bottom') by -= fontSize * 1.2;
+                            else if (dCtx.textBaseline === 'middle') by -= fontSize * 0.6;
+                            
+                            bx -= margin; by -= margin;
+                            const bw = textWidth + margin * 2;
+                            const bh = fontSize * 1.2 + margin * 2;
+                            
+                            const cbx = Math.max(0, Math.floor(bx));
+                            const cby = Math.max(0, Math.floor(by));
+                            const cbw = Math.min(w - cbx, Math.ceil(bw));
+                            const cbh = Math.min(h - cby, Math.ceil(bh));
+                            
+                            if (cbw > 0 && cbh > 0) {
+                                const dData = dCtx.getImageData(cbx, cby, cbw, cbh);
+                                const dd = dData.data;
+                                const noiseLevel = dateNoiseAmt * 2.55; 
+                                const dropoutProb = dateNoiseAmt / 200; 
+                                
+                                for (let i = 0; i < dd.length; i += 4) {
+                                    if (dd[i+3] > 0) {
+                                        const noise = (Math.random() - 0.5) * noiseLevel;
+                                        dd[i] = Math.max(0, Math.min(255, dd[i] + noise));
+                                        dd[i+1] = Math.max(0, Math.min(255, dd[i+1] + noise));
+                                        dd[i+2] = Math.max(0, Math.min(255, dd[i+2] + noise));
+                                        if (Math.random() < dropoutProb) dd[i+3] *= (Math.random() * 0.5 + 0.2); 
+                                    }
+                                }
+                                dCtx.putImageData(dData, cbx, cby);
+                            }
+                        }
+                        offCtx.globalCompositeOperation = 'screen';
+                        offCtx.drawImage(dCanvas, 0, 0);
+                        offCtx.globalCompositeOperation = 'source-over';
+                    }, m_date);
+                }
+
+                if (targetDim === null) {
+                    effectCanvas.width = w; effectCanvas.height = h;
+                    effectCtx.clearRect(0, 0, w, h);
+                    effectCtx.drawImage(offCanvas, 0, 0);
+                    renderPreview(); 
+                } else {
+                    const downloadCanvas = document.createElement('canvas');
+                    downloadCanvas.width = w; downloadCanvas.height = h;
+                    const dCtx = downloadCanvas.getContext('2d');
+                    dCtx.drawImage(offCanvas, 0, 0, w, h); 
+                    if (onComplete) onComplete(downloadCanvas);
+                }
+
+                if (targetDim === null && !isDraggingFlare && !isDrawingMask) loading.classList.add('hidden');
+            }, 10);
+        }
+
+        function downloadImage() {
+            if (!isImageLoaded) return;
+            const resSelect = document.getElementById('download-res');
+            const resValue = parseInt(resSelect.value);
+            const loadingText = loading.querySelector('span.text-sm');
+            const originalText = loadingText.textContent;
+            loadingText.textContent = '고화질 렌더링 및 저장 중...';
+            loading.classList.remove('hidden');
+
+            applyEffects((targetCanvas) => {
+                const link = document.createElement('a');
+                link.download = `retro_photo_${Date.now()}.png`;
+                link.href = targetCanvas.toDataURL('image/png', 1.0);
+                link.click();
+                loadingText.textContent = originalText;
+                applyEffects(); 
+            }, resValue);
+        }
+    </script>
+</body>
+</html>
