@@ -8,7 +8,7 @@
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&display=swap');
         
-        /* iframe 호환성을 위한 높이 100% 고정 */
+        /* iframe 호환성을 위해 body와 html을 고정하고, 내부 컨테이너를 absolute로 채움 */
         html, body {
             width: 100%;
             height: 100%;
@@ -17,6 +17,7 @@
             font-family: 'Noto Sans KR', sans-serif;
             background-color: #121212;
             color: #e0e0e0;
+            overflow: hidden;
         }
 
         .canvas-container {
@@ -101,7 +102,6 @@
             background: rgba(168, 85, 247, 0.6); 
         }
 
-        /* 도움말 툴팁 스타일 */
         #global-tooltip {
             position: fixed;
             background-color: #1f2937;
@@ -122,7 +122,6 @@
             font-weight: 400;
         }
 
-        /* 브러시 커서 스타일 */
         #brush-cursor {
             position: fixed;
             border-radius: 50%;
@@ -135,12 +134,13 @@
         }
     </style>
 </head>
-<body class="h-full w-full flex flex-col p-0 sm:p-4 box-border">
-
+<body>
+<!-- iframe 오류 방지: absolute inset-0 으로 꽉 채우는 래퍼 -->
+<div class="fixed inset-0 w-full h-full flex flex-col p-0 sm:p-4 box-border bg-[#121212] m-0 overflow-hidden">
     <div id="brush-cursor"></div>
     <div id="global-tooltip"></div>
 
-    <div class="w-full h-full max-w-[1600px] mx-auto bg-gray-900 sm:rounded-2xl shadow-2xl overflow-hidden sm:border border-gray-800 flex flex-col md:flex-row">
+    <div class="w-full h-full max-w-[1600px] mx-auto bg-gray-900 sm:rounded-2xl shadow-2xl overflow-hidden sm:border border-gray-800 flex flex-col md:flex-row flex-1 min-h-0">
         
         <!-- 좌측/상단: 이미지 프리뷰 영역 -->
         <div class="flex-1 p-4 sm:p-6 flex flex-col min-h-0">
@@ -171,7 +171,7 @@
         </div>
 
         <!-- 우측/하단: 컨트롤 패널 영역 -->
-        <div class="w-full md:w-[360px] lg:w-[420px] bg-gray-950 p-4 sm:p-6 border-t md:border-t-0 md:border-l border-gray-800 flex flex-col gap-4 h-[40vh] md:h-full shrink-0">
+        <div class="w-full md:w-[360px] lg:w-[420px] bg-gray-950 p-4 sm:p-6 border-t md:border-t-0 md:border-l border-gray-800 flex flex-col gap-4 h-[45vh] md:h-full shrink-0">
             
             <div class="space-y-4 flex-1 overflow-y-auto pr-2 custom-scrollbar">
                 <h2 class="text-lg font-semibold text-gray-300 border-b border-gray-800 pb-2 sticky top-0 bg-gray-950 z-10 pt-1">필터 설정</h2>
@@ -392,10 +392,10 @@
                         </div>
                     </div>
                     <select id="paper-type" class="w-full bg-gray-900 text-xs text-gray-300 rounded px-2 py-1.5 border border-gray-700 focus:border-purple-500 outline-none mb-1">
+                        <option value="watercolor">🎨 두꺼운 엠보싱 종이 (수채화지)</option>
                         <option value="rough">📜 거친 도화지</option>
                         <option value="old">🏺 오래된 변색 종이</option>
                         <option value="crumpled">📄 구겨진 종이</option>
-                        <option value="watercolor">🎨 두꺼운 엠보싱 종이 (수채화지)</option>
                     </select>
                     <input type="range" id="paper" min="0" max="100" value="0">
                 </div>
@@ -773,6 +773,7 @@
 
         </div>
     </div>
+</div>
 
     <script>
         const fileInput = document.getElementById('file-input');
@@ -781,7 +782,7 @@
         const placeholder = document.getElementById('upload-placeholder');
         const downloadBtn = document.getElementById('download-btn');
         const loading = document.getElementById('loading');
-        const bgModeSelect = document.getElementById('bg-mode'); // 배경 모드
+        const bgModeSelect = document.getElementById('bg-mode'); 
         
         const degradeSlider = document.getElementById('degrade');
         const crossProcessSlider = document.getElementById('crossprocess');
@@ -850,6 +851,7 @@
         
         let originalImage = new Image();
         let isImageLoaded = false;
+        let hasRealImage = false;
         let renderTimeout = null;
         
         let activeTool = null;
@@ -877,19 +879,40 @@
             restore: document.createElement('canvas'),
             layer1: document.createElement('canvas'),
             layer2: document.createElement('canvas'),
-            scaledMask: document.createElement('canvas')
+            scaledMask: document.createElement('canvas'),
+            tempMask: document.createElement('canvas'),
+            tCanvas: document.createElement('canvas'),
+            detailCanvas: document.createElement('canvas')
         };
         const ctxOff = workspaceCanvases.off.getContext('2d', { willReadFrequently: true });
         const ctxRestore = workspaceCanvases.restore.getContext('2d', { willReadFrequently: true });
         const ctxL1 = workspaceCanvases.layer1.getContext('2d', { willReadFrequently: true });
         const ctxL2 = workspaceCanvases.layer2.getContext('2d', { willReadFrequently: true });
         const ctxSM = workspaceCanvases.scaledMask.getContext('2d', { willReadFrequently: true });
+        const tmCtx = workspaceCanvases.tempMask.getContext('2d', { willReadFrequently: true });
+        const tCtx = workspaceCanvases.tCanvas.getContext('2d', { willReadFrequently: true });
+        
+        // 정적 엠보싱 디테일 맵 (한 번만 생성)
+        workspaceCanvases.detailCanvas.width = 256;
+        workspaceCanvases.detailCanvas.height = 256;
+        const detailCtx = workspaceCanvases.detailCanvas.getContext('2d');
+        const dData = detailCtx.createImageData(256, 256);
+        const dd = dData.data;
+        for(let i=0; i<dd.length; i+=4) {
+            const v = 128 + (Math.random() - 0.5) * 80;
+            dd[i] = dd[i+1] = dd[i+2] = v;
+            dd[i+3] = 255;
+        }
+        detailCtx.putImageData(dData, 0, 0);
 
         function resizeWorkspaces(w, h) {
             for (const key in workspaceCanvases) {
-                if (workspaceCanvases[key].width !== w || workspaceCanvases[key].height !== h) {
-                    workspaceCanvases[key].width = w;
-                    workspaceCanvases[key].height = h;
+                // tempMask와 detailCanvas는 별도로 관리
+                if (key !== 'tempMask' && key !== 'detailCanvas' && key !== 'tCanvas') {
+                    if (workspaceCanvases[key].width !== w || workspaceCanvases[key].height !== h) {
+                        workspaceCanvases[key].width = w;
+                        workspaceCanvases[key].height = h;
+                    }
                 }
             }
         }
@@ -900,10 +923,6 @@
         dateInput.value = new Date().toISOString().split('T')[0];
         fileInput.addEventListener('change', handleImageUpload);
         
-        bgModeSelect.addEventListener('change', () => {
-            if (isImageLoaded) { clearTimeout(renderTimeout); renderTimeout = setTimeout(() => applyEffects(), 50); }
-        });
-
         const globalTooltip = document.getElementById('global-tooltip');
         const helpIcons = document.querySelectorAll('.help-icon');
         
@@ -1178,7 +1197,7 @@
         }
 
         const dropzone = document.getElementById('dropzone');
-        dropzone.addEventListener('click', () => { if (!isImageLoaded) fileInput.click(); });
+        dropzone.addEventListener('click', () => { if (!hasRealImage) fileInput.click(); });
         ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(e => dropzone.addEventListener(e, preventDefaults, false));
         function preventDefaults(e) { e.preventDefault(); e.stopPropagation(); }
         ['dragenter', 'dragover'].forEach(e => dropzone.addEventListener(e, () => dropzone.classList.add('border-purple-500', 'bg-gray-800/50'), false));
@@ -1190,6 +1209,49 @@
                 fileInput.dispatchEvent(new Event('change'));
             }
         }, false);
+
+        bgModeSelect.addEventListener('change', () => {
+            const bgMode = bgModeSelect.value;
+            if (!hasRealImage) {
+                if (bgMode !== 'image') {
+                    // 가상의 빈 캔버스 생성 및 활성화
+                    const blankCanvas = document.createElement('canvas');
+                    blankCanvas.width = 1200;
+                    blankCanvas.height = 800;
+                    
+                    originalImage.onload = () => {
+                        isImageLoaded = true;
+                        placeholder.classList.add('hidden');
+                        canvas.classList.remove('hidden');
+                        downloadBtn.disabled = false;
+                        dropzone.classList.remove('cursor-pointer');
+                        
+                        let w = originalImage.width;
+                        let h = originalImage.height;
+                        canvas.width = w; canvas.height = h;
+                        maskCanvas.width = w; maskCanvas.height = h;
+                        maskCtx.clearRect(0, 0, w, h);
+                        if (dustParticles.length === 0) generateDustAndScratches();
+                        
+                        clearTimeout(renderTimeout); 
+                        renderTimeout = setTimeout(() => applyEffects(), 50);
+                    };
+                    originalImage.src = blankCanvas.toDataURL();
+                } else {
+                    isImageLoaded = false;
+                    placeholder.classList.remove('hidden');
+                    canvas.classList.add('hidden');
+                    downloadBtn.disabled = true;
+                    dropzone.classList.add('cursor-pointer');
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                }
+            } else {
+                if (isImageLoaded) { 
+                    clearTimeout(renderTimeout); 
+                    renderTimeout = setTimeout(() => applyEffects(), 50); 
+                }
+            }
+        });
 
         canvas.addEventListener('mousedown', handlePointerDown);
         canvas.addEventListener('touchstart', handlePointerDown, { passive: false });
@@ -1330,12 +1392,13 @@
             reader.onload = (event) => {
                 originalImage.onload = () => {
                     isImageLoaded = true;
+                    hasRealImage = true;
                     placeholder.classList.add('hidden');
                     canvas.classList.remove('hidden');
                     downloadBtn.disabled = false;
                     dropzone.classList.remove('cursor-pointer'); 
                     
-                    bgModeSelect.value = 'image'; // 새 이미지 시 원본 모드로 초기화
+                    bgModeSelect.value = 'image'; 
 
                     const filterIds = ['degrade', 'crossprocess', 'shadow-tint', 'halation', 'aberration', 'noise', 'dust', 'paper', 'lightleak', 'vignette'];
                     filterIds.forEach(id => {
@@ -1354,7 +1417,7 @@
                         if (cb) cb.checked = true; 
                     });
                     noiseTypeSelect.value = 'analog'; 
-                    paperTypeSelect.value = 'rough';
+                    paperTypeSelect.value = 'watercolor';
 
                     maskToggle.checked = false;
                     maskControls.className = "flex flex-col gap-3 opacity-50 pointer-events-none transition-opacity";
@@ -1437,6 +1500,7 @@
             reader.readAsDataURL(file);
         }
 
+        // 메모리 누수 완벽 차단: 프리뷰 전용 캔버스 재사용
         function renderPreview() {
             if (!isImageLoaded) return;
             ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -1445,37 +1509,42 @@
 
             if (showMaskToggle.checked) {
                 ctx.save();
-                const tempMask = document.createElement('canvas');
-                tempMask.width = canvas.width; tempMask.height = canvas.height;
-                const tmCtx = tempMask.getContext('2d');
-                tmCtx.drawImage(maskCanvas, 0, 0);
+                if (workspaceCanvases.tempMask.width !== canvas.width || workspaceCanvases.tempMask.height !== canvas.height) {
+                    workspaceCanvases.tempMask.width = canvas.width;
+                    workspaceCanvases.tempMask.height = canvas.height;
+                }
+                tmCtx.clearRect(0, 0, canvas.width, canvas.height);
+                tmCtx.drawImage(maskCanvas, 0, 0, canvas.width, canvas.height);
                 tmCtx.globalCompositeOperation = 'source-in';
                 tmCtx.fillStyle = 'rgba(255, 0, 0, 0.4)';
                 tmCtx.fillRect(0, 0, canvas.width, canvas.height);
-                ctx.drawImage(tempMask, 0, 0);
+                tmCtx.globalCompositeOperation = 'source-over';
+                
+                ctx.drawImage(workspaceCanvases.tempMask, 0, 0);
                 ctx.restore();
             }
         }
 
         function applyEffects(onComplete = null, targetDim = null) {
-            if (!isImageLoaded) return;
+            if (!isImageLoaded || !originalImage || originalImage.width === 0 || originalImage.height === 0) return;
             if (!isDraggingFlare && !isDrawingMask && !onComplete) loading.classList.remove('hidden');
             
             const noiseType = document.getElementById('noise-type').value;
             const bgMode = document.getElementById('bg-mode').value;
             
+            // UI 스레드 차단 완화
             setTimeout(() => {
-                let w = originalImage.width;
-                let h = originalImage.height;
-                const maxDim = targetDim !== null ? targetDim : 1600;
+                try {
+                    let w = originalImage.width;
+                    let h = originalImage.height;
+                    const maxDim = targetDim !== null ? targetDim : 1600;
 
-                if (maxDim > 0 && (w > maxDim || h > maxDim)) {
-                    if (w > h) { h = Math.floor(h * (maxDim / w)); w = maxDim; } 
-                    else { w = Math.floor(w * (maxDim / h)); h = maxDim; }
-                }
+                    if (maxDim > 0 && (w > maxDim || h > maxDim)) {
+                        if (w > h) { h = Math.floor(h * (maxDim / w)); w = maxDim; } 
+                        else { w = Math.floor(w * (maxDim / h)); h = maxDim; }
+                    }
 
-                const resScale = Math.max(w, h) / 1600;
-
+                    const resScale = Math.max(w, h) / 1600;
                 const degradeAmt = parseFloat(document.getElementById('degrade-num').value) || 0;
                 const crossProcessAmt = parseFloat(document.getElementById('crossprocess-num').value) || 0;
                 const shadowTintAmt = parseFloat(document.getElementById('shadow-tint-num').value) || 0;
@@ -1625,707 +1694,6 @@
                         offCtx.filter = 'none';
                         offCtx.globalAlpha = 1.0;
                         offCtx.globalCompositeOperation = 'source-over';
-                        hCtx.globalCompositeOperation = 'source-over';
-                    }, m_halation);
-                }
-
-                if (noiseAmt > 0 || aberrationAmt > 0 || shadowTintAmt !== 0 || crossProcessAmt > 0) {
-                    const imageData = offCtx.getImageData(0, 0, w, h);
-                    const data = imageData.data;
-                    const originalData = new Uint8ClampedArray(data);
-                    
-                    const noiseLevel = noiseAmt * 1.5;
-                    const cp = crossProcessAmt / 100;
-                    const shiftAmt = Math.round(aberrationAmt);
-
-                    for (let y = 0; y < h; y++) {
-                        for (let x = 0; x < w; x++) {
-                            const i = (y * w + x) * 4;
-                            let mAlpha = maskData ? (maskData[i + 3] / 255) : 0;
-                            let r = originalData[i], g = originalData[i+1], b = originalData[i+2], a = originalData[i+3];
-
-                            // 투명 배경일 때 투명 픽셀은 처리 스킵
-                            if (a === 0 && bgMode === 'transparent' && noiseAmt === 0) continue;
-
-                            if (aberrationAmt > 0) {
-                                let abWeight = m_aberration ? (1 - mAlpha) : 1;
-                                let rx = Math.max(0, Math.min(w - 1, x - shiftAmt));
-                                let bx = Math.max(0, Math.min(w - 1, x + shiftAmt));
-                                let abR = originalData[(y * w + rx) * 4];
-                                let abB = originalData[(y * w + bx) * 4 + 2];
-                                r = r * (1 - abWeight) + abR * abWeight;
-                                b = b * (1 - abWeight) + abB * abWeight;
-                            }
-
-                            const luminance = 0.299 * r + 0.587 * g + 0.114 * b;
-
-                            if (cp > 0) {
-                                let cpWeight = m_cp ? (1 - mAlpha) : 1;
-                                let rN = r / 255, gN = g / 255;
-                                let rCurve = rN < 0.5 ? 2 * rN * rN : 1 - 2 * Math.pow(1 - rN, 2);
-                                let gCurve = gN < 0.5 ? 2 * gN * gN : 1 - 2 * Math.pow(1 - gN, 2);
-                                let outR = r + (rCurve * 255 - r) * cp;
-                                let outG = g + (gCurve * 255 - g) * (cp * 0.7);
-                                let bShift = (1 - luminance / 255) * 80 - (luminance / 255) * 40;
-                                let outB = Math.min(255, Math.max(0, b + bShift * cp));
-                                r = r * (1 - cpWeight) + outR * cpWeight;
-                                g = g * (1 - cpWeight) + outG * cpWeight;
-                                b = b * (1 - cpWeight) + outB * cpWeight;
-                            }
-
-                            if (shadowTintAmt !== 0) {
-                                let tintWeight = m_tint ? (1 - mAlpha) : 1;
-                                const shadowFactor = Math.max(0, 1 - (luminance / 200)); 
-                                const strength = Math.pow(shadowFactor, 2); 
-                                let outR, outG, outB;
-                                if (shadowTintAmt > 0) {
-                                    outR = Math.min(255, r + shadowTintAmt * strength);
-                                    outG = Math.max(0, g - (shadowTintAmt * 0.3) * strength);
-                                    outB = Math.min(255, b + (shadowTintAmt * 0.5) * strength);
-                                } else {
-                                    outR = Math.max(0, r + (shadowTintAmt * 0.3) * strength);
-                                    outG = Math.min(255, g - shadowTintAmt * strength);
-                                    outB = Math.min(255, b - (shadowTintAmt * 0.5) * strength);
-                                }
-                                r = r * (1 - tintWeight) + outR * tintWeight;
-                                g = g * (1 - tintWeight) + outG * tintWeight;
-                                b = b * (1 - tintWeight) + outB * tintWeight;
-                            }
-
-                            if (noiseAmt > 0 && noiseType !== 'coarse') {
-                                let noiseWeight = m_noise ? (1 - mAlpha) : 1;
-                                let n = 0, nr = 0, ng = 0, nb = 0;
-                                
-                                if (noiseType === 'analog') {
-                                    const lumNormalized = luminance / 255;
-                                    const filmCurve = 1.0 - Math.pow(2.0 * lumNormalized - 1.0, 2);
-                                    n = (Math.random() - 0.5) * noiseLevel * (0.4 + 0.6 * filmCurve);
-                                    nr = ng = nb = n;
-                                } else if (noiseType === 'color') {
-                                    nr = (Math.random() - 0.5) * noiseLevel;
-                                    ng = (Math.random() - 0.5) * noiseLevel;
-                                    nb = (Math.random() - 0.5) * noiseLevel;
-                                } else {
-                                    n = (Math.random() - 0.5) * noiseLevel;
-                                    nr = ng = nb = n;
-                                }
-                                
-                                r = Math.max(0, Math.min(255, r + nr * noiseWeight));
-                                g = Math.max(0, Math.min(255, g + ng * noiseWeight));
-                                b = Math.max(0, Math.min(255, b + nb * noiseWeight));
-                                
-                                // 투명 배경에 노이즈를 그릴 때는 알파값을 채움
-                                if (bgMode === 'transparent' && a === 0 && noiseWeight > 0) data[i+3] = 255;
-                            }
-                            
-                            data[i] = r; data[i + 1] = g; data[i + 2] = b;
-                        }
-                    }
-                    offCtx.putImageData(imageData, 0, 0);
-                }
-
-                if (noiseAmt > 0 && noiseType === 'coarse') {
-                    applyEffectWithMask(() => {
-                        const grainSize = Math.max(1.5, w * 0.0025);
-                        const tw = Math.ceil(w / grainSize);
-                        const th = Math.ceil(h / grainSize);
-                        const gCtx = ctxL1;
-                        
-                        gCtx.fillStyle = 'rgb(128,128,128)';
-                        gCtx.fillRect(0, 0, tw, th);
-                        
-                        const gData = gCtx.getImageData(0, 0, tw, th);
-                        const d = gData.data;
-                        const amt = noiseAmt * 2.5; 
-                        
-                        for (let i = 0; i < d.length; i+=4) {
-                            const val = (Math.random() - 0.5) * amt;
-                            d[i] = Math.max(0, Math.min(255, 128 + val));
-                            d[i+1] = Math.max(0, Math.min(255, 128 + val));
-                            d[i+2] = Math.max(0, Math.min(255, 128 + val));
-                        }
-                        gCtx.putImageData(gData, 0, 0);
-                        
-                        offCtx.globalCompositeOperation = 'soft-light';
-                        offCtx.globalAlpha = 0.8; 
-                        offCtx.imageSmoothingEnabled = false; 
-                        offCtx.drawImage(workspaceCanvases.layer1, 0, 0, tw, th, 0, 0, w, h);
-                        offCtx.imageSmoothingEnabled = true;
-                        offCtx.globalAlpha = 1.0;
-                        offCtx.globalCompositeOperation = 'source-over';
-                    }, m_noise);
-                }
-
-                if (paperAmt > 0) {
-                    applyEffectWithMask(() => {
-                        const pCtx = ctxL1;
-                        pCtx.clearRect(0, 0, w, h);
-                        const intensity = paperAmt / 100;
-
-                        if (paperType === 'rough') {
-                            pCtx.fillStyle = '#808080';
-                            pCtx.fillRect(0, 0, w, h);
-                            const pData = pCtx.getImageData(0, 0, w, h);
-                            const pd = pData.data;
-                            for (let i = 0; i < pd.length; i += 4) {
-                                const val = 128 + (Math.random() - 0.5) * 60;
-                                pd[i] = pd[i+1] = pd[i+2] = Math.max(0, Math.min(255, val));
-                                pd[i+3] = 255;
-                            }
-                            pCtx.putImageData(pData, 0, 0);
-
-                            offCtx.globalCompositeOperation = 'soft-light';
-                            offCtx.globalAlpha = intensity * 0.8;
-                            offCtx.drawImage(workspaceCanvases.layer1, 0, 0);
-                        } 
-                        else if (paperType === 'old') {
-                            pCtx.fillStyle = `rgba(210, 180, 140, ${intensity * 0.4})`; 
-                            pCtx.fillRect(0, 0, w, h);
-
-                            const grad = pCtx.createRadialGradient(w/2, h/2, Math.min(w,h)*0.3, w/2, h/2, Math.max(w,h)*0.8);
-                            grad.addColorStop(0, 'rgba(139, 69, 19, 0)');
-                            grad.addColorStop(1, `rgba(139, 69, 19, ${intensity * 0.7})`);
-                            pCtx.fillStyle = grad;
-                            pCtx.fillRect(0, 0, w, h);
-
-                            for (let i = 0; i < 25; i++) {
-                                pCtx.beginPath();
-                                pCtx.arc(Math.random() * w, Math.random() * h, Math.random() * Math.min(w, h) * 0.4, 0, Math.PI * 2);
-                                pCtx.fillStyle = `rgba(101, 67, 33, ${Math.random() * 0.08 * intensity})`;
-                                pCtx.fill();
-                            }
-
-                            offCtx.globalCompositeOperation = 'multiply';
-                            offCtx.globalAlpha = 1.0;
-                            offCtx.drawImage(workspaceCanvases.layer1, 0, 0);
-                        } 
-                        else if (paperType === 'crumpled') {
-                            pCtx.fillStyle = '#808080';
-                            pCtx.fillRect(0, 0, w, h);
-                            
-                            for (let i = 0; i < 40; i++) {
-                                pCtx.beginPath();
-                                let sx = Math.random() * w;
-                                let sy = Math.random() * h;
-                                let ex = sx + (Math.random() - 0.5) * w * 0.9;
-                                let ey = sy + (Math.random() - 0.5) * h * 0.9;
-                                
-                                pCtx.moveTo(sx, sy);
-                                pCtx.lineTo(ex, ey);
-                                pCtx.lineWidth = Math.random() * 5 + 1;
-                                
-                                pCtx.strokeStyle = `rgba(255, 255, 255, ${Math.random() * 0.6})`;
-                                pCtx.stroke();
-                                
-                                pCtx.beginPath();
-                                pCtx.moveTo(sx + 3, sy + 3);
-                                pCtx.lineTo(ex + 3, ey + 3);
-                                pCtx.strokeStyle = `rgba(0, 0, 0, ${Math.random() * 0.5})`;
-                                pCtx.stroke();
-                            }
-                            
-                            offCtx.globalCompositeOperation = 'soft-light';
-                            offCtx.globalAlpha = intensity;
-                            offCtx.drawImage(workspaceCanvases.layer1, 0, 0);
-                        }
-                        else if (paperType === 'watercolor') {
-                            const mapCtx = ctxL2;
-                            
-                            // 1. 유기적인 고해상도 높이맵(Height Map) 생성 (프랙탈 노이즈 기법)
-                            mapCtx.fillStyle = '#808080';
-                            mapCtx.fillRect(0, 0, w, h);
-                            
-                            // 입자감을 아주 곱게 만들기 위해 스케일을 대폭 줄임
-                            const scales = [
-                                { size: Math.max(2, w * 0.005), alpha: 0.4 },
-                                { size: Math.max(1, w * 0.002), alpha: 0.4 },
-                                { size: 1, alpha: 0.6 } // 1픽셀 단위의 미세 노이즈
-                            ];
-
-                            const tCanvas = document.createElement('canvas');
-                            const tCtx = tCanvas.getContext('2d');
-
-                            scales.forEach(s => {
-                                const sw = Math.ceil(w / s.size);
-                                const sh = Math.ceil(h / s.size);
-                                tCanvas.width = sw; tCanvas.height = sh;
-                                const tData = tCtx.createImageData(sw, sh);
-                                const d = tData.data;
-                                for (let i = 0; i < d.length; i += 4) {
-                                    d[i] = d[i+1] = d[i+2] = Math.random() * 255;
-                                    d[i+3] = 255;
-                                }
-                                tCtx.putImageData(tData, 0, 0);
-
-                                mapCtx.globalAlpha = s.alpha;
-                                mapCtx.globalCompositeOperation = 'overlay';
-                                mapCtx.imageSmoothingEnabled = true;
-                                mapCtx.imageSmoothingQuality = 'high';
-                                mapCtx.drawImage(tCanvas, 0, 0, sw, sh, 0, 0, w, h);
-                            });
-
-                            // 2. 픽셀 연산을 통한 정교한 엠보싱(입체 그림자) 렌더링
-                            const mapData = mapCtx.getImageData(0, 0, w, h);
-                            const md = mapData.data;
-                            
-                            const pData = pCtx.createImageData(w, h);
-                            const pd = pData.data;
-                            
-                            const shift = 1; // 1픽셀 간격으로 경사도를 계산하여 고운 질감 극대화
-                            const offset = shift * w * 4 + shift * 4;
-                            const depthMult = intensity * 1.5; // 너무 강해지지 않게 부드럽게 조절
-
-                            // 베이스를 중립 회색(128)으로 초기화
-                            for(let i=0; i<pd.length; i+=4) {
-                                pd[i] = pd[i+1] = pd[i+2] = 128;
-                                pd[i+3] = 255;
-                            }
-
-                            // 맵의 경사도(Slope)를 계산하여 하이라이트와 섀도우 극대화
-                            for (let y = shift; y < h - shift; y++) {
-                                let i = (y * w + shift) * 4;
-                                for (let x = shift; x < w - shift; x++) {
-                                    const noise = (Math.random() - 0.5) * 10 * intensity; // 미세 종이 가루 질감
-                                    const diff = md[i] - md[i - offset];
-                                    const val = 128 + diff * depthMult + noise;
-                                    pd[i] = pd[i+1] = pd[i+2] = val; 
-                                    i += 4;
-                                }
-                            }
-                            
-                            pCtx.putImageData(pData, 0, 0);
-
-                            // 3. 완성된 엠보싱 레이어를 이미지에 자연스럽게 합성
-                            offCtx.globalCompositeOperation = 'soft-light';
-                            offCtx.globalAlpha = Math.min(1.0, 0.4 + intensity * 0.8);
-                            offCtx.drawImage(workspaceCanvases.layer1, 0, 0);
-                        }
-                        
-                        offCtx.globalAlpha = 1.0;
-                        offCtx.globalCompositeOperation = 'source-over';
-                    }, m_paper);
-                }
-
-                if (dustAmt > 0) {
-                    applyEffectWithMask(() => {
-                        const intensity = dustAmt / 100;
-                        const opacityFactor = dustOpacityAmt / 100; 
-                        const activeDust = Math.floor(dustParticles.length * intensity);
-                        for(let i=0; i<activeDust; i++) {
-                            const p = dustParticles[i];
-                            offCtx.fillStyle = p.isDark ? `rgba(20,20,20,${p.opacity * opacityFactor})` : `rgba(240,240,240,${p.opacity * opacityFactor})`;
-                            offCtx.beginPath();
-                            offCtx.arc(p.x * w, p.y * h, p.size * Math.max(1, w/1000), 0, Math.PI*2);
-                            offCtx.fill();
-                        }
-                        
-                        const activeScratches = Math.floor(scratchLines.length * intensity);
-                        offCtx.lineWidth = Math.max(1, w/1500);
-                        for(let i=0; i<activeScratches; i++) {
-                            const s = scratchLines[i];
-                            offCtx.strokeStyle = s.isDark ? `rgba(0,0,0,${s.opacity * 0.7 * opacityFactor})` : `rgba(255,255,255,${s.opacity * 0.5 * opacityFactor})`;
-                            offCtx.beginPath();
-                            const sx = s.x * w; const sy = s.y * h;
-                            const slen = s.len * Math.max(w,h) * 0.5;
-                            offCtx.moveTo(sx, sy);
-                            offCtx.lineTo(sx + Math.cos(s.angle)*slen, sy + Math.sin(s.angle)*slen);
-                            offCtx.stroke();
-                        }
-                    }, m_dust);
-                }
-
-                if (lightLeakAmt > 0) {
-                    applyEffectWithMask(() => {
-                        const intensity = lightLeakAmt / 100;
-                        offCtx.globalCompositeOperation = 'screen';
-                        const leak1 = offCtx.createLinearGradient(0, 0, w * 0.35, 0);
-                        leak1.addColorStop(0, `rgba(255, 30, 0, ${intensity * 0.85})`);
-                        leak1.addColorStop(0.5, `rgba(255, 100, 0, ${intensity * 0.4})`);
-                        leak1.addColorStop(1, 'rgba(0,0,0,0)');
-                        offCtx.fillStyle = leak1;
-                        offCtx.fillRect(0, 0, w * 0.35, h);
-
-                        const leak2 = offCtx.createRadialGradient(w, 0, 0, w, 0, Math.max(w, h) * 0.6);
-                        leak2.addColorStop(0, `rgba(255, 150, 50, ${intensity * 0.7})`);
-                        leak2.addColorStop(0.5, `rgba(255, 80, 0, ${intensity * 0.3})`);
-                        leak2.addColorStop(1, 'rgba(0,0,0,0)');
-                        offCtx.fillStyle = leak2;
-                        offCtx.fillRect(w * 0.4, 0, w * 0.6, h * 0.6);
-                        offCtx.globalCompositeOperation = 'source-over';
-                    }, m_leak);
-                }
-
-                if (vignetteAmt > 0) {
-                    applyEffectWithMask(() => {
-                        const outerRadius = Math.sqrt(Math.pow(w/2, 2) + Math.pow(h/2, 2));
-                        const gradient = offCtx.createRadialGradient(w/2, h/2, outerRadius * 0.3, w/2, h/2, outerRadius);
-                        gradient.addColorStop(0, 'rgba(0,0,0,0)');
-                        gradient.addColorStop(1, `rgba(0,0,0,${vignetteAmt / 100 * 0.9})`);
-                        offCtx.globalCompositeOperation = 'multiply';
-                        offCtx.fillStyle = gradient;
-                        offCtx.fillRect(0, 0, w, h);
-                        offCtx.globalCompositeOperation = 'source-over';
-                    }, m_vignette);
-                }
-
-                if (useFlare) {
-                    applyEffectWithMask(() => {
-                        const opacity = flareOpacityAmt / 100;
-                        const fCtx = ctxL1;
-                        
-                        fCtx.clearRect(0, 0, w, h);
-                        fCtx.fillStyle = 'black';
-                        fCtx.fillRect(0, 0, w, h);
-                        fCtx.globalCompositeOperation = 'screen'; 
-
-                        const lx = w * (flareXAmt / 100);
-                        const ly = h * (flareYAmt / 100);
-                        const baseRadius = Math.min(w, h) * 0.45 * (flareSizeAmt / 100);
-                        
-                        const t = flareThicknessAmt / 100;
-                        const innerRadius = Math.max(0, baseRadius * (0.85 - 0.15 * t));
-                        const outerRadius = baseRadius * (0.85 + 0.15 * t);
-
-                        const cViol = `rgba(130, 80, 200, ${opacity * 0.7})`;
-                        const cBlue = `rgba(80, 150, 220, ${opacity * 0.8})`;
-                        const cGree = `rgba(100, 200, 120, ${opacity * 0.8})`;
-                        const cYell = `rgba(220, 200, 80, ${opacity * 0.9})`;
-                        const cOran = `rgba(220, 100, 60, ${opacity * 0.8})`;
-
-                        const cWarm1 = `rgba(200, 100, 150, ${opacity * 0.6})`; 
-                        const cWarm2 = `rgba(255, 200, 100, ${opacity * 0.8})`; 
-                        const cWarm3 = `rgba(255, 100, 50, ${opacity * 0.8})`;  
-                        
-                        const cCool1 = `rgba(30, 80, 255, ${opacity * 0.7})`; 
-                        const cCool2 = `rgba(120, 50, 255, ${opacity * 0.8})`; 
-                        const cCool3 = `rgba(0, 200, 220, ${opacity * 0.6})`;
-
-                        let ringGrad = fCtx.createRadialGradient(lx, ly, innerRadius, lx, ly, outerRadius);
-                        
-                        if (flareType === 'warm') {
-                            ringGrad.addColorStop(0, 'rgba(0,0,0,0)');
-                            ringGrad.addColorStop(0.2, cWarm1); 
-                            ringGrad.addColorStop(0.5, cWarm2); 
-                            ringGrad.addColorStop(0.8, cWarm3);  
-                            ringGrad.addColorStop(1, 'rgba(0,0,0,0)');
-                        } else if (flareType === 'rainbow') {
-                            ringGrad.addColorStop(0, 'rgba(0,0,0,0)');
-                            ringGrad.addColorStop(0.1, cViol);
-                            ringGrad.addColorStop(0.3, cBlue);
-                            ringGrad.addColorStop(0.5, cGree);
-                            ringGrad.addColorStop(0.7, cYell);
-                            ringGrad.addColorStop(0.9, cOran);
-                            ringGrad.addColorStop(1, 'rgba(0,0,0,0)');
-                        } else if (flareType === 'cool') {
-                            ringGrad.addColorStop(0, 'rgba(0,0,0,0)');
-                            ringGrad.addColorStop(0.2, cCool1); 
-                            ringGrad.addColorStop(0.5, cCool2); 
-                            ringGrad.addColorStop(0.8, cCool3);  
-                            ringGrad.addColorStop(1, 'rgba(0,0,0,0)');
-                        }
-
-                        fCtx.globalAlpha = 0.2;
-                        fCtx.fillStyle = ringGrad;
-                        fCtx.fillRect(0, 0, w, h);
-
-                        const maxNeedleLength = Math.max(baseRadius * 2.5, outerRadius * 1.5);
-                        fCtx.globalAlpha = 0.8;
-                        fCtx.beginPath();
-                        for (let i = 0; i < 720; i++) {
-                            const angle = (i * Math.PI * 2) / 720 + (Math.random() * 0.01);
-                            const length = maxNeedleLength * (0.6 + Math.random() * 0.4); 
-                            const thickness = Math.random() * 0.002 + 0.0005; 
-                            fCtx.moveTo(lx, ly);
-                            fCtx.lineTo(lx + Math.cos(angle - thickness) * length, ly + Math.sin(angle - thickness) * length);
-                            fCtx.lineTo(lx + Math.cos(angle + thickness) * length, ly + Math.sin(angle + thickness) * length);
-                        }
-                        fCtx.fillStyle = ringGrad;
-                        fCtx.fill();
-
-                        fCtx.globalAlpha = 0.4;
-                        fCtx.beginPath();
-                        for (let i = 0; i < 180; i++) {
-                            const angle = (i * Math.PI * 2) / 180;
-                            const length = maxNeedleLength * (0.8 + Math.random() * 0.4);
-                            const thickness = Math.random() * 0.008 + 0.002; 
-                            fCtx.moveTo(lx, ly);
-                            fCtx.lineTo(lx + Math.cos(angle - thickness) * length, ly + Math.sin(angle - thickness) * length);
-                            fCtx.lineTo(lx + Math.cos(angle + thickness) * length, ly + Math.sin(angle + thickness) * length);
-                        }
-                        fCtx.fillStyle = ringGrad;
-                        fCtx.fill();
-                        fCtx.globalAlpha = 1.0; 
-
-                        if (flareCoreBrightAmt > 0) {
-                            const coreOpacity = flareCoreBrightAmt / 100;
-                            const coreRadius = Math.min(w, h) * 0.45 * (flareSizeAmt / 100) * (flareCoreSizeAmt / 100);
-                            const coreGrad = fCtx.createRadialGradient(lx, ly, 0, lx, ly, coreRadius);
-                            if (flareType === 'cool') {
-                                coreGrad.addColorStop(0, `rgba(255, 255, 255, ${coreOpacity})`);
-                                coreGrad.addColorStop(0.15, `rgba(180, 230, 255, ${coreOpacity * 0.8})`);
-                                coreGrad.addColorStop(0.5, `rgba(50, 150, 255, ${coreOpacity * 0.3})`);
-                                coreGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
-                            } else {
-                                coreGrad.addColorStop(0, `rgba(255, 255, 255, ${coreOpacity})`);
-                                coreGrad.addColorStop(0.15, `rgba(255, 230, 180, ${coreOpacity * 0.8})`);
-                                coreGrad.addColorStop(0.5, `rgba(255, 150, 50, ${coreOpacity * 0.3})`);
-                                coreGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
-                            }
-                            fCtx.fillStyle = coreGrad;
-                            fCtx.beginPath();
-                            fCtx.arc(lx, ly, coreRadius, 0, Math.PI * 2);
-                            fCtx.fill();
-                        }
-
-                        const fData = fCtx.getImageData(0, 0, w, h);
-                        const fd = fData.data;
-                        const fOrig = new Uint8ClampedArray(fd);
-                        const fShift = Math.round(flareAberrationAmt);
-                        const fNoiseLevel = flareNoiseAmt;
-
-                        for (let y = 0; y < h; y++) {
-                            for (let x = 0; x < w; x++) {
-                                const i = (y * w + x) * 4;
-                                let rx = Math.max(0, Math.min(w - 1, x - fShift));
-                                let bx = Math.max(0, Math.min(w - 1, x + fShift));
-                                let r = fOrig[(y * w + rx) * 4];
-                                let g = fOrig[i + 1];
-                                let b = fOrig[(y * w + bx) * 4 + 2];
-                                
-                                if (r > 0 || g > 0 || b > 0) {
-                                    const lum = 0.299 * r + 0.587 * g + 0.114 * b;
-                                    const noise = (Math.random() - 0.5) * fNoiseLevel * (0.3 + 0.7 * (lum / 255));
-                                    fd[i] = Math.max(0, Math.min(255, r + noise));
-                                    fd[i+1] = Math.max(0, Math.min(255, g + noise));
-                                    fd[i+2] = Math.max(0, Math.min(255, b + noise));
-                                }
-                            }
-                        }
-                        fCtx.putImageData(fData, 0, 0);
-
-                        offCtx.globalCompositeOperation = flareBlendMode;
-                        if (flareBlurAmt > 0) offCtx.filter = `blur(${flareBlurAmt}px)`;
-                        offCtx.drawImage(workspaceCanvases.layer1, 0, 0);
-                        offCtx.filter = 'none';
-                        offCtx.globalCompositeOperation = 'source-over';
-                        fCtx.globalCompositeOperation = 'source-over';
-                    }, m_flare);
-                }
-
-                if (useCrossFilter && crossFlares.length > 0) {
-                    applyEffectWithMask(() => {
-                        const intensity = crossFilterIntensityAmt / 100;
-                        const len = Math.max(w, h) * (crossFilterLengthAmt / 100) * 0.5;
-                        const maxThickness = Math.max(w, h) * 0.05;
-                        const baseThickness = Math.max(2, (crossFilterThicknessAmt / 100) * maxThickness);
-                        const angleRad = (crossFilterAngleAmt * Math.PI) / 180;
-                        const rainbow = crossFilterRainbowAmt / 100;
-
-                        const cCtx = ctxL1;
-                        cCtx.clearRect(0, 0, w, h);
-                        cCtx.globalCompositeOperation = 'screen';
-
-                        crossFlares.forEach(flare => {
-                            const fx = flare.x * w;
-                            const fy = flare.y * h;
-
-                            cCtx.save();
-                            cCtx.translate(fx, fy);
-                            cCtx.rotate(angleRad);
-
-                            for(let i=0; i<4; i++) {
-                                cCtx.rotate(Math.PI / 2);
-                                cCtx.save();
-                                
-                                const grad = cCtx.createLinearGradient(0, 0, len, 0);
-                                const rAmt = rainbow;
-                                const wAmt = 1 - rainbow;
-                                const color = (r, g, b, a) => `rgba(${r*rAmt + 255*wAmt}, ${g*rAmt + 255*wAmt}, ${b*rAmt + 255*wAmt}, ${a})`;
-                                
-                                if (crossFilterType === 'rainbow') {
-                                    grad.addColorStop(0, color(255,255,255, intensity));
-                                    grad.addColorStop(0.05, color(255,255,255, intensity * 0.9));
-                                    grad.addColorStop(0.15, color(255,255,100, intensity * 0.7));
-                                    grad.addColorStop(0.3, color(255,50,50, intensity * 0.5));
-                                    grad.addColorStop(0.5, color(50,255,50, intensity * 0.3));
-                                    grad.addColorStop(0.7, color(50,100,255, intensity * 0.15));
-                                    grad.addColorStop(0.9, color(150,50,255, intensity * 0.05));
-                                    grad.addColorStop(1, color(0,0,0, 0));
-                                } else if (crossFilterType === 'cool') {
-                                    grad.addColorStop(0, color(255,255,255, intensity));
-                                    grad.addColorStop(0.05, color(200,240,255, intensity * 0.9));
-                                    grad.addColorStop(0.2, color(100,200,255, intensity * 0.7));
-                                    grad.addColorStop(0.5, color(50,150,255, intensity * 0.4));
-                                    grad.addColorStop(0.8, color(50,50,255, intensity * 0.15));
-                                    grad.addColorStop(1, color(0,0,0, 0));
-                                } else if (crossFilterType === 'warm') {
-                                    grad.addColorStop(0, color(255,255,255, intensity));
-                                    grad.addColorStop(0.05, color(255,240,200, intensity * 0.9));
-                                    grad.addColorStop(0.2, color(255,200,100, intensity * 0.7));
-                                    grad.addColorStop(0.5, color(255,100,50, intensity * 0.4));
-                                    grad.addColorStop(0.8, color(255,50,50, intensity * 0.15));
-                                    grad.addColorStop(1, color(0,0,0, 0));
-                                }
-
-                                cCtx.fillStyle = grad;
-                                
-                                cCtx.beginPath();
-                                cCtx.ellipse(0, 0, len, baseThickness, 0, -Math.PI / 2, Math.PI / 2);
-                                cCtx.fill();
-                                cCtx.restore();
-                            }
-                            
-                            cCtx.beginPath();
-                            const centerGrad = cCtx.createRadialGradient(0,0,0, 0,0, len * 0.1);
-                            centerGrad.addColorStop(0, `rgba(255,255,255,${intensity})`);
-                            centerGrad.addColorStop(1, `rgba(255,255,255,0)`);
-                            cCtx.fillStyle = centerGrad;
-                            cCtx.arc(0, 0, len * 0.1, 0, Math.PI*2);
-                            cCtx.fill();
-
-                            cCtx.restore();
-                        });
-
-                        const cbAmt = crossFilterBlurAmt * resScale; 
-                        const caAmt = crossFilterAberrationAmt * resScale;
-                        const cnAmt = crossFilterNoiseAmt * 5; 
-
-                        if (caAmt > 0 || cnAmt > 0) {
-                            const cData = cCtx.getImageData(0, 0, w, h);
-                            const cd = cData.data;
-                            const cOrig = new Uint8ClampedArray(cd);
-                            const shift = Math.round(caAmt);
-                            
-                            for (let y = 0; y < h; y++) {
-                                for (let x = 0; x < w; x++) {
-                                    const i = (y * w + x) * 4;
-                                    
-                                    if (cd[i+3] > 0) {
-                                        let rx = Math.max(0, Math.min(w - 1, x - shift));
-                                        let bx = Math.max(0, Math.min(w - 1, x + shift));
-                                        
-                                        let r = cOrig[(y * w + rx) * 4];
-                                        let g = cOrig[i + 1];
-                                        let b = cOrig[(y * w + bx) * 4 + 2];
-                                        
-                                        if (cnAmt > 0) {
-                                            const noise = (Math.random() - 0.5) * cnAmt;
-                                            r += noise;
-                                            g += noise;
-                                            b += noise;
-                                        }
-                                        
-                                        cd[i] = Math.max(0, Math.min(255, r));
-                                        cd[i+1] = Math.max(0, Math.min(255, g));
-                                        cd[i+2] = Math.max(0, Math.min(255, b));
-                                    }
-                                }
-                            }
-                            cCtx.putImageData(cData, 0, 0);
-                        }
-
-                        offCtx.globalCompositeOperation = 'screen';
-                        offCtx.globalAlpha = crossFilterOpacityAmt;
-                        if (cbAmt > 0) offCtx.filter = `blur(${cbAmt}px)`;
-                        offCtx.drawImage(workspaceCanvases.layer1, 0, 0);
-                        offCtx.filter = 'none';
-                        offCtx.globalAlpha = 1.0;
-                        offCtx.globalCompositeOperation = 'source-over';
-                        cCtx.globalCompositeOperation = 'source-over';
-                    }, m_crossfilter);
-                }
-
-                if (useDatestamp) {
-                    applyEffectWithMask(() => {
-                        let yy = '00', mm = '01', dd = '01';
-                        if (customDate) {
-                            const parts = customDate.split('-');
-                            if (parts.length === 3) {
-                                yy = parts[0].slice(2); mm = parts[1]; dd = parts[2];
-                            }
-                        } else {
-                            const today = new Date();
-                            yy = String(today.getFullYear()).slice(2);
-                            mm = String(today.getMonth() + 1);
-                            dd = String(today.getDate());
-                        }
-                        mm = mm.padStart(2, ' '); dd = dd.padStart(2, ' ');
-                        const dateString = `'${yy} ${mm} ${dd}`;
-                        
-                        const fontSize = Math.round(Math.max(16, h * 0.035) * dateSizeAmt);
-                        
-                        const dCtx = ctxL1;
-                        dCtx.clearRect(0, 0, w, h);
-                        
-                        dCtx.font = `bold ${fontSize}px "Courier New", Courier, monospace`;
-                        const paddingX = fontSize * 1.5; const paddingY = fontSize;
-                        let tx, ty;
-
-                        switch (datePos) {
-                            case 'br': tx = w - paddingX; ty = h - paddingY; dCtx.textAlign = 'right'; dCtx.textBaseline = 'bottom'; break;
-                            case 'bl': tx = paddingX; ty = h - paddingY; dCtx.textAlign = 'left'; dCtx.textBaseline = 'bottom'; break;
-                            case 'tr': tx = w - paddingX; ty = paddingY; dCtx.textAlign = 'right'; dCtx.textBaseline = 'top'; break;
-                            case 'tl': tx = paddingX; ty = paddingY; dCtx.textAlign = 'left'; dCtx.textBaseline = 'top'; break;
-                            default: tx = w - paddingX; ty = h - paddingY; dCtx.textAlign = 'right'; dCtx.textBaseline = 'bottom';
-                        }
-                        
-                        const glowScale = dateGlowAmt / 50;
-                        dCtx.fillStyle = '#ffaa33';
-                        
-                        if (glowScale > 0) {
-                            dCtx.shadowColor = 'rgba(255, 30, 0, 0.8)';
-                            dCtx.shadowBlur = fontSize * 0.6 * glowScale;
-                            dCtx.fillText(dateString, tx, ty);
-                            
-                            dCtx.shadowBlur = fontSize * 0.2 * glowScale;
-                            dCtx.fillText(dateString, tx, ty);
-                        }
-                        
-                        dCtx.shadowColor = 'transparent';
-                        dCtx.shadowBlur = 0;
-                        dCtx.fillText(dateString, tx, ty);
-
-                        if (dateNoiseAmt > 0) {
-                            const metrics = dCtx.measureText(dateString);
-                            const textWidth = metrics.width;
-                            const margin = fontSize * 2 * Math.max(1, glowScale);
-                            
-                            let bx = tx, by = ty;
-                            if (dCtx.textAlign === 'right') bx -= textWidth;
-                            else if (dCtx.textAlign === 'center') bx -= textWidth / 2;
-                            if (dCtx.textBaseline === 'bottom') by -= fontSize * 1.2;
-                            else if (dCtx.textBaseline === 'middle') by -= fontSize * 0.6;
-                            
-                            bx -= margin; by -= margin;
-                            const bw = textWidth + margin * 2;
-                            const bh = fontSize * 1.2 + margin * 2;
-                            
-                            const cbx = Math.max(0, Math.floor(bx));
-                            const cby = Math.max(0, Math.floor(by));
-                            const cbw = Math.min(w - cbx, Math.ceil(bw));
-                            const cbh = Math.min(h - cby, Math.ceil(bh));
-                            
-                            if (cbw > 0 && cbh > 0) {
-                                const dData = dCtx.getImageData(cbx, cby, cbw, cbh);
-                                const dd = dData.data;
-                                const noiseLevel = dateNoiseAmt * 2.55; 
-                                const dropoutProb = dateNoiseAmt / 200; 
-                                
-                                for (let i = 0; i < dd.length; i += 4) {
-                                    if (dd[i+3] > 0) {
-                                        const noise = (Math.random() - 0.5) * noiseLevel;
-                                        dd[i] = Math.max(0, Math.min(255, dd[i] + noise));
-                                        dd[i+1] = Math.max(0, Math.min(255, dd[i+1] + noise));
-                                        dd[i+2] = Math.max(0, Math.min(255, dd[i+2] + noise));
-                                        if (Math.random() < dropoutProb) dd[i+3] *= (Math.random() * 0.5 + 0.2); 
-                                    }
-                                }
-                                dCtx.putImageData(dData, cbx, cby);
-                            }
-                        }
-                        offCtx.globalCompositeOperation = 'screen';
-                        offCtx.drawImage(workspaceCanvases.layer1, 0, 0);
-                        offCtx.globalCompositeOperation = 'source-over';
                     }, m_date);
                 }
 
@@ -2341,9 +1709,12 @@
                     dCtx.drawImage(offCanvas, 0, 0, w, h); 
                     if (onComplete) onComplete(downloadCanvas);
                 }
-
-                if (targetDim === null && !isDraggingFlare && !isDrawingMask) loading.classList.add('hidden');
-            }, 10);
+                } catch(err) {
+                    console.error("Effect Processing Error:", err);
+                } finally {
+                    if (targetDim === null && !isDraggingFlare && !isDrawingMask) loading.classList.add('hidden');
+                }
+            }, 30);
         }
 
         function downloadImage() {
